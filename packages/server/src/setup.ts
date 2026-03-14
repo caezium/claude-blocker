@@ -1,72 +1,119 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
-import { DEFAULT_PORT } from "@claude-blocker/shared";
+import { DEFAULT_PORT } from "./types.js";
 
 interface ClaudeSettings {
-  hooks?: Record<string, unknown[]>;
+  hooks?: Record<string, ClaudeHookRule[]>;
   [key: string]: unknown;
 }
 
-const HOOK_COMMAND = `curl -s -X POST http://localhost:${DEFAULT_PORT}/hook -H 'Content-Type: application/json' -d "$(cat)" > /dev/null 2>&1 &`;
+interface ClaudeHookRule {
+  matcher?: string;
+  hooks?: Array<{
+    type?: string;
+    command?: string;
+    [key: string]: unknown;
+  }>;
+  [key: string]: unknown;
+}
 
-const HOOKS_CONFIG = {
-  UserPromptSubmit: [
-    {
-      hooks: [
-        {
-          type: "command",
-          command: HOOK_COMMAND,
-        },
-      ],
-    },
-  ],
-  PreToolUse: [
-    {
-      matcher: "*",
-      hooks: [
-        {
-          type: "command",
-          command: HOOK_COMMAND,
-        },
-      ],
-    },
-  ],
-  Stop: [
-    {
-      hooks: [
-        {
-          type: "command",
-          command: HOOK_COMMAND,
-        },
-      ],
-    },
-  ],
-  SessionStart: [
-    {
-      hooks: [
-        {
-          type: "command",
-          command: HOOK_COMMAND,
-        },
-      ],
-    },
-  ],
-  SessionEnd: [
-    {
-      hooks: [
-        {
-          type: "command",
-          command: HOOK_COMMAND,
-        },
-      ],
-    },
-  ],
-};
+const HOOK_EVENTS = [
+  "UserPromptSubmit",
+  "PreToolUse",
+  "Stop",
+  "SessionStart",
+  "SessionEnd",
+] as const;
 
-export function setupHooks(): void {
+function createHookCommand(port: number): string {
+  return `curl -s -X POST http://localhost:${port}/hook -H 'Content-Type: application/json' -d "$(cat)" > /dev/null 2>&1 &`;
+}
+
+function isClaudeBlockerCommand(command: string): boolean {
+  return /http:\/\/localhost:\d+\/hook/.test(command);
+}
+
+function createHooksConfig(port: number): Record<(typeof HOOK_EVENTS)[number], ClaudeHookRule[]> {
+  const command = createHookCommand(port);
+  return {
+    UserPromptSubmit: [
+      {
+        hooks: [
+          {
+            type: "command",
+            command,
+          },
+        ],
+      },
+    ],
+    PreToolUse: [
+      {
+        matcher: "*",
+        hooks: [
+          {
+            type: "command",
+            command,
+          },
+        ],
+      },
+    ],
+    Stop: [
+      {
+        hooks: [
+          {
+            type: "command",
+            command,
+          },
+        ],
+      },
+    ],
+    SessionStart: [
+      {
+        hooks: [
+          {
+            type: "command",
+            command,
+          },
+        ],
+      },
+    ],
+    SessionEnd: [
+      {
+        hooks: [
+          {
+            type: "command",
+            command,
+          },
+        ],
+      },
+    ],
+  };
+}
+
+function stripClaudeBlockerHooks(rule: ClaudeHookRule): ClaudeHookRule | null {
+  if (!Array.isArray(rule.hooks)) {
+    return rule;
+  }
+
+  const hooks = rule.hooks.filter(
+    (hook) => !(hook.type === "command" && typeof hook.command === "string" && isClaudeBlockerCommand(hook.command))
+  );
+
+  if (hooks.length === 0) {
+    return null;
+  }
+
+  return {
+    ...rule,
+    hooks,
+  };
+}
+
+export function setupHooks(port: number = DEFAULT_PORT): void {
   const claudeDir = join(homedir(), ".claude");
   const settingsPath = join(claudeDir, "settings.json");
+  const hooksConfig = createHooksConfig(port);
 
   // Ensure .claude directory exists
   if (!existsSync(claudeDir)) {
@@ -87,11 +134,15 @@ export function setupHooks(): void {
     }
   }
 
-  // Merge hooks (don't overwrite existing hooks for other events)
-  settings.hooks = {
-    ...settings.hooks,
-    ...HOOKS_CONFIG,
-  };
+  // Merge hooks while preserving existing non-Claude Blocker commands
+  settings.hooks ??= {};
+  for (const hookName of HOOK_EVENTS) {
+    const existing = Array.isArray(settings.hooks[hookName]) ? settings.hooks[hookName] : [];
+    const preserved = existing
+      .map(stripClaudeBlockerHooks)
+      .filter((rule): rule is ClaudeHookRule => rule !== null);
+    settings.hooks[hookName] = [...preserved, ...hooksConfig[hookName]];
+  }
 
   // Write settings
   writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
@@ -100,6 +151,8 @@ export function setupHooks(): void {
 ┌─────────────────────────────────────────────────┐
 │                                                 │
 │   Claude Blocker Setup Complete!                │
+│                                                 │
+│   Hook target port: ${port}
 │                                                 │
 │   Hooks configured in:                          │
 │   ${settingsPath}
@@ -117,7 +170,7 @@ export function setupHooks(): void {
 `);
 }
 
-export function areHooksConfigured(): boolean {
+export function areHooksConfigured(port: number = DEFAULT_PORT): boolean {
   const settingsPath = join(homedir(), ".claude", "settings.json");
 
   if (!existsSync(settingsPath)) {
@@ -132,8 +185,23 @@ export function areHooksConfigured(): boolean {
       return false;
     }
 
-    // Check if at least one of our hooks is configured
-    return Object.keys(HOOKS_CONFIG).some((hookName) => hookName in settings.hooks!);
+    const expectedTarget = `http://localhost:${port}/hook`;
+    return HOOK_EVENTS.every((hookName) => {
+      const rules = settings.hooks?.[hookName];
+      if (!Array.isArray(rules)) {
+        return false;
+      }
+
+      return rules.some((rule) =>
+        Array.isArray(rule.hooks) &&
+        rule.hooks.some(
+          (hook) =>
+            hook.type === "command" &&
+            typeof hook.command === "string" &&
+            hook.command.includes(expectedTarget)
+        )
+      );
+    });
   } catch {
     return false;
   }
@@ -153,8 +221,21 @@ export function removeHooks(): void {
 
     if (settings.hooks) {
       // Remove our hooks
-      for (const hookName of Object.keys(HOOKS_CONFIG)) {
-        delete settings.hooks[hookName];
+      for (const hookName of HOOK_EVENTS) {
+        const rules = settings.hooks[hookName];
+        if (!Array.isArray(rules)) {
+          continue;
+        }
+
+        const filtered = rules
+          .map(stripClaudeBlockerHooks)
+          .filter((rule): rule is ClaudeHookRule => rule !== null);
+
+        if (filtered.length === 0) {
+          delete settings.hooks[hookName];
+        } else {
+          settings.hooks[hookName] = filtered;
+        }
       }
 
       // If hooks object is empty, remove it entirely

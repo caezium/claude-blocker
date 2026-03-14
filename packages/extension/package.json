@@ -4,11 +4,17 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsup src/service-worker.ts src/content-script.ts src/popup.ts src/options.ts --format iife --out-dir dist --clean && node scripts/generate-icons.mjs && cp src/popup.html src/popup.css src/options.html src/options.css manifest.json dist/",
+    "build": "pnpm build:chrome",
+    "build:chrome": "tsup src/service-worker.ts src/content-script.ts src/popup.ts src/options.ts --format iife --out-dir dist --clean && node scripts/generate-icons.mjs dist && cp src/popup.html src/popup.css src/options.html src/options.css manifest.json dist/",
+    "build:firefox": "tsup src/service-worker.ts src/content-script.ts src/popup.ts src/options.ts --format iife --out-dir dist-firefox --clean && node scripts/generate-icons.mjs dist-firefox && cp src/popup.html src/popup.css src/options.html src/options.css dist-firefox/ && cp manifest.firefox.json dist-firefox/manifest.json",
     "dev": "pnpm build --watch",
     "typecheck": "tsc --noEmit",
     "pack": "node scripts/pack-crx.mjs",
-    "zip": "cd dist && zip -r ../claude-blocker.zip ."
+    "zip": "cd dist && zip -r ../claude-blocker.zip .",
+    "zip:firefox": "cd dist-firefox && zip -r ../claude-blocker-firefox.xpi ."
+  },
+  "dependencies": {
+    "@claude-blocker/shared": "workspace:*"
   },
   "devDependencies": {
     "@types/chrome": "^0.0.287",

@@ -1,6 +1,4 @@
-export {};
-
-const DEFAULT_DOMAINS = ["x.com", "youtube.com"];
+import { DEFAULT_BLOCKED_DOMAINS, DEFAULT_PORT } from "@claude-blocker/shared";
 
 interface ExtensionState {
   blocked: boolean;
@@ -8,6 +6,7 @@ interface ExtensionState {
   sessions: number;
   working: number;
   bypassActive: boolean;
+  serverPort: number;
 }
 
 interface BypassStatus {
@@ -22,7 +21,6 @@ const statusText = document.getElementById("status-text") as HTMLElement;
 const sessionsEl = document.getElementById("sessions") as HTMLElement;
 const workingEl = document.getElementById("working") as HTMLElement;
 const blockStatusEl = document.getElementById("block-status") as HTMLElement;
-const blockingCard = document.getElementById("blocking-card") as HTMLElement;
 const addForm = document.getElementById("add-form") as HTMLFormElement;
 const domainInput = document.getElementById("domain-input") as HTMLInputElement;
 const domainList = document.getElementById("domain-list") as HTMLUListElement;
@@ -30,9 +28,16 @@ const siteCount = document.getElementById("site-count") as HTMLElement;
 const bypassBtn = document.getElementById("bypass-btn") as HTMLButtonElement;
 const bypassText = document.getElementById("bypass-text") as HTMLElement;
 const bypassStatus = document.getElementById("bypass-status") as HTMLElement;
+const serverPortForm = document.getElementById("server-port-form") as HTMLFormElement;
+const serverPortInput = document.getElementById("server-port-input") as HTMLInputElement;
+const serverPortStatus = document.getElementById("server-port-status") as HTMLElement;
 
 let bypassCountdown: ReturnType<typeof setInterval> | null = null;
 let currentDomains: string[] = [];
+
+function isValidPort(port: number): boolean {
+  return Number.isInteger(port) && port > 0 && port < 65536;
+}
 
 // Load domains from storage
 async function loadDomains(): Promise<string[]> {
@@ -41,8 +46,8 @@ async function loadDomains(): Promise<string[]> {
       if (result.blockedDomains && Array.isArray(result.blockedDomains)) {
         resolve(result.blockedDomains);
       } else {
-        chrome.storage.sync.set({ blockedDomains: DEFAULT_DOMAINS });
-        resolve(DEFAULT_DOMAINS);
+        chrome.storage.sync.set({ blockedDomains: DEFAULT_BLOCKED_DOMAINS });
+        resolve(DEFAULT_BLOCKED_DOMAINS);
       }
     });
   });
@@ -78,6 +83,23 @@ function normalizeDomain(input: string): string {
 function isValidDomain(domain: string): boolean {
   const regex = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*\.[a-z]{2,}$/;
   return regex.test(domain);
+}
+
+function setServerPortStatus(message: string, isError = false): void {
+  serverPortStatus.textContent = message;
+  serverPortStatus.style.color = isError ? "var(--accent-red)" : "var(--text-dim)";
+}
+
+function updateServerPort(port: number): void {
+  chrome.runtime.sendMessage({ type: "SET_SERVER_PORT", port }, (response) => {
+    if (response?.success) {
+      setServerPortStatus(`Using localhost:${port}`);
+      refreshState();
+      return;
+    }
+
+    setServerPortStatus(response?.reason ?? "Failed to update port", true);
+  });
 }
 
 // Render the domain list
@@ -177,6 +199,10 @@ function updateUI(state: ExtensionState): void {
     blockStatusEl.textContent = "Open";
     blockStatusEl.style.color = "var(--accent-green)";
   }
+
+  if (document.activeElement !== serverPortInput) {
+    serverPortInput.value = String(state.serverPort ?? DEFAULT_PORT);
+  }
 }
 
 // Update bypass button state
@@ -223,6 +249,7 @@ function refreshState(): void {
   chrome.runtime.sendMessage({ type: "GET_STATE" }, (state: ExtensionState) => {
     if (state) {
       updateUI(state);
+      setServerPortStatus(`Using localhost:${state.serverPort ?? DEFAULT_PORT}`);
     }
   });
 
@@ -234,6 +261,19 @@ function refreshState(): void {
 }
 
 // Event listeners
+serverPortForm.addEventListener("submit", (e) => {
+  e.preventDefault();
+  const parsed = Number(serverPortInput.value);
+  if (!isValidPort(parsed)) {
+    setServerPortStatus("Enter a valid port between 1 and 65535", true);
+    serverPortInput.classList.add("error");
+    setTimeout(() => serverPortInput.classList.remove("error"), 400);
+    return;
+  }
+
+  updateServerPort(parsed);
+});
+
 addForm.addEventListener("submit", (e) => {
   e.preventDefault();
   addDomain(domainInput.value);
@@ -260,6 +300,7 @@ chrome.runtime.onMessage.addListener((message) => {
 async function init(): Promise<void> {
   currentDomains = await loadDomains();
   renderDomains();
+  setServerPortStatus(`Using localhost:${DEFAULT_PORT}`);
   refreshState();
 }
 

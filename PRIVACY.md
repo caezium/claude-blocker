@@ -26,10 +26,10 @@ Claude Blocker collects and stores the following data **locally on your device**
 
 ## Data Storage
 
-All data is stored using Chrome's `chrome.storage.sync` API:
+All data is stored using the extension `storage.sync` API:
 
 - **Local storage** — Data is stored on your device
-- **Chrome sync** — If you have Chrome sync enabled, your blocked domains list will sync across your devices via your Google account
+- **Browser sync** — If browser sync is enabled, your blocked domains list can sync across your devices
 - **No external servers** — We do not operate any servers that receive your data
 
 ## Server Communication
@@ -48,11 +48,11 @@ Claude Blocker does not use any third-party services, analytics, or tracking.
 
 To delete all Claude Blocker data:
 
-1. Open Chrome extension settings
+1. Open browser extension settings
 2. Click on Claude Blocker → "Remove"
 3. All locally stored data will be deleted
 
-Alternatively, clear the extension's storage via Chrome DevTools.
+Alternatively, clear the extension's storage via browser extension DevTools.
 
 ## Permissions Explained
 

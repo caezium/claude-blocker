@@ -3,7 +3,7 @@
 import { createInterface } from "readline";
 import { startServer } from "./server.js";
 import { setupHooks, removeHooks, areHooksConfigured } from "./setup.js";
-import { DEFAULT_PORT } from "@claude-blocker/shared";
+import { DEFAULT_PORT } from "./types.js";
 
 const args = process.argv.slice(2);
 
@@ -41,22 +41,7 @@ Examples:
 }
 
 async function main(): Promise<void> {
-  if (args.includes("--help") || args.includes("-h")) {
-    printHelp();
-    process.exit(0);
-  }
-
-  if (args.includes("--setup")) {
-    setupHooks();
-    process.exit(0);
-  }
-
-  if (args.includes("--remove")) {
-    removeHooks();
-    process.exit(0);
-  }
-
-  // Parse port
+  // Parse port first so all commands can use it
   let port = DEFAULT_PORT;
   const portIndex = args.indexOf("--port");
   if (portIndex !== -1 && args[portIndex + 1]) {
@@ -69,14 +54,29 @@ async function main(): Promise<void> {
     }
   }
 
+  if (args.includes("--help") || args.includes("-h")) {
+    printHelp();
+    process.exit(0);
+  }
+
+  if (args.includes("--setup")) {
+    setupHooks(port);
+    process.exit(0);
+  }
+
+  if (args.includes("--remove")) {
+    removeHooks();
+    process.exit(0);
+  }
+
   // Check if hooks are configured, prompt for setup if not
-  if (!areHooksConfigured()) {
-    console.log("Claude Blocker hooks are not configured yet.\n");
+  if (!areHooksConfigured(port)) {
+    console.log(`Claude Blocker hooks are not configured for port ${port}.\n`);
     const answer = await prompt("Would you like to set them up now? (Y/n) ");
     const normalized = answer.trim().toLowerCase();
 
     if (normalized === "" || normalized === "y" || normalized === "yes") {
-      setupHooks();
+      setupHooks(port);
       console.log(""); // Add spacing before server start
     } else {
       console.log("\nSkipping setup. You can run 'npx claude-blocker --setup' later.\n");

@@ -24,7 +24,7 @@
           </div>
           <div class="brand-text">
             <h1>Claude Blocker</h1>
-            <span class="version">v1.0.0</span>
+            <span class="version">v0.0.2</span>
           </div>
         </div>
 
@@ -50,6 +50,34 @@
             <span class="stat-value" id="block-status">—</span>
             <span class="stat-label">Status</span>
           </div>
+        </section>
+
+        <!-- Server Section -->
+        <section class="server-section">
+          <div class="section-header">
+            <div class="section-title">
+              <h2>Server Port</h2>
+              <p class="section-desc">Must match the port used by the local claude-blocker server</p>
+            </div>
+          </div>
+
+          <form class="server-port-form" id="server-port-form">
+            <div class="input-wrapper">
+              <input
+                type="number"
+                id="server-port-input"
+                min="1"
+                max="65535"
+                placeholder="8765"
+                spellcheck="false"
+                autocomplete="off"
+              />
+            </div>
+            <button type="submit" class="add-btn">
+              <span>Save Port</span>
+            </button>
+          </form>
+          <p class="server-port-status" id="server-port-status">Loading...</p>
         </section>
 
         <!-- Blocked Sites Section -->

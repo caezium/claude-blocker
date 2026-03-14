@@ -5,7 +5,8 @@ import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const svgPath = join(__dirname, '..', 'icon.svg');
-const distPath = join(__dirname, '..', 'dist');
+const outputDirArg = process.argv[2] ?? 'dist';
+const distPath = join(__dirname, '..', outputDirArg);
 
 const sizes = [16, 32, 48, 128];
 

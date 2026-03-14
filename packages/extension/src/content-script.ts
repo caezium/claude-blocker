@@ -1,8 +1,7 @@
-export {};
+import { DEFAULT_BLOCKED_DOMAINS } from "@claude-blocker/shared";
 
 const MODAL_ID = "claude-blocker-modal";
 const TOAST_ID = "claude-blocker-toast";
-const DEFAULT_DOMAINS = ["x.com", "youtube.com"];
 
 // State shape from service worker
 interface PublicState {
@@ -27,7 +26,7 @@ function loadDomains(): Promise<string[]> {
       if (result.blockedDomains && Array.isArray(result.blockedDomains)) {
         resolve(result.blockedDomains);
       } else {
-        resolve(DEFAULT_DOMAINS);
+        resolve(DEFAULT_BLOCKED_DOMAINS);
       }
     });
   });

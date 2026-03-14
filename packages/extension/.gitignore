@@ -3,5 +3,6 @@ key.pem
 
 # Built extension
 dist/
+dist-firefox/
 *.crx
 *.zip

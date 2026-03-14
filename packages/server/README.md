@@ -16,7 +16,8 @@ npx claude-blocker
 # First time setup (configures Claude Code hooks)
 npx claude-blocker --setup
 
-# The server will start automatically after setup
+# Then start the server
+npx claude-blocker
 ```
 
 ## Usage
@@ -25,11 +26,14 @@ npx claude-blocker --setup
 # Start server (default port 8765)
 npx claude-blocker
 
-# Start with setup (configures hooks if not already done)
+# Configure hooks (and exit)
 npx claude-blocker --setup
 
 # Custom port
 npx claude-blocker --port 9000
+
+# Configure hooks for a custom port
+npx claude-blocker --setup --port 9000
 
 # Remove hooks from Claude Code
 npx claude-blocker --remove
@@ -49,9 +53,9 @@ npx claude-blocker --help
 2. **Server** — Runs on localhost and:
    - Tracks all active Claude Code sessions
    - Knows when sessions are "working" vs "idle"
-   - Broadcasts state via WebSocket to the Chrome extension
+   - Broadcasts state via WebSocket to the browser extension
 
-3. **Extension** — Connects to the server and:
+3. **Extension** (Chrome/Firefox) — Connects to the server and:
    - Blocks configured sites when no sessions are working
    - Shows a modal overlay (soft block, not network block)
    - Updates in real-time without page refresh
@@ -62,7 +66,7 @@ npx claude-blocker --help
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/status` | GET | Returns current state (sessions, blocked status) |
+| `/status` | GET | Returns current state (sessions, blocked status, working, waitingForInput) |
 | `/hook` | POST | Receives hook payloads from Claude Code |
 
 ### WebSocket
@@ -74,7 +78,8 @@ Connect to `ws://localhost:8765/ws` to receive real-time state updates:
   "type": "state",
   "blocked": true,
   "sessions": 1,
-  "working": 0
+  "working": 0,
+  "waitingForInput": 0
 }
 ```
 

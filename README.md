@@ -8,7 +8,7 @@ Block distracting websites unless [Claude Code](https://claude.ai/claude-code) i
 
 ```
 ┌─────────────────┐     hooks      ┌─────────────────┐    websocket    ┌─────────────────┐
-│   Claude Code   │ ─────────────► │  Blocker Server │ ◄─────────────► │ Chrome Extension│
+│   Claude Code   │ ─────────────► │  Blocker Server │ ◄─────────────► │Browser Extension│
 │   (terminal)    │                │  (localhost)    │                 │   (browser)     │
 └─────────────────┘                └─────────────────┘                 └─────────────────┘
        │                                   │                                   │
@@ -20,7 +20,7 @@ Block distracting websites unless [Claude Code](https://claude.ai/claude-code) i
 
 1. **Claude Code hooks** notify the server when you submit a prompt or when Claude finishes
 2. **Blocker server** tracks all Claude Code sessions and their working/idle states
-3. **Chrome extension** blocks configured sites when no session is actively working
+3. **Browser extension** blocks configured sites when no session is actively working
 
 ## Quick Start
 
@@ -30,27 +30,45 @@ Block distracting websites unless [Claude Code](https://claude.ai/claude-code) i
 npx claude-blocker --setup
 ```
 
-This installs the Claude Code hooks and starts the server. The hooks are configured in `~/.claude/settings.json`.
+This installs the Claude Code hooks in `~/.claude/settings.json`.
+Then start the server:
 
-### 2. Install the Chrome extension
+```bash
+npx claude-blocker
+```
 
-- Download from [Chrome Web Store](#) *(coming soon)*
-- Or load unpacked from `packages/extension/dist`
+### 2. Install the browser extension
+
+For Chrome/Chromium:
+- Load unpacked from `packages/extension/dist` after running `pnpm --filter @claude-blocker/extension build:chrome`
+
+For Firefox:
+- Build Firefox package: `pnpm --filter @claude-blocker/extension build:firefox`
+- Open `about:debugging#/runtime/this-firefox`
+- Click **Load Temporary Add-on...**
+- Select `packages/extension/dist-firefox/manifest.json`
 
 ### 3. Configure blocked sites
 
 Click the extension icon → Settings to add sites you want blocked when Claude is idle.
+If you run the server on a non-default port, set the same value in extension Settings → Server Port.
 
 Default blocked sites: `x.com`, `youtube.com`
 
 ## Server CLI
 
 ```bash
-# Start with auto-setup (recommended for first run)
+# Configure Claude Code hooks
 npx claude-blocker --setup
+
+# Start server (prompts for setup if needed)
+npx claude-blocker
 
 # Start on custom port
 npx claude-blocker --port 9000
+
+# Configure hooks for a custom port
+npx claude-blocker --setup --port 9000
 
 # Remove hooks from Claude Code settings
 npx claude-blocker --remove
@@ -71,7 +89,7 @@ npx claude-blocker --help
 ## Requirements
 
 - Node.js 18+
-- Chrome (or Chromium-based browser)
+- Chrome/Chromium or Firefox
 - [Claude Code](https://claude.ai/claude-code)
 
 ## Development
@@ -94,7 +112,7 @@ pnpm dev
 ```
 packages/
 ├── server/      # Node.js server + CLI (published to npm)
-├── extension/   # Chrome extension (Manifest V3)
+├── extension/   # Browser extension (Chrome + Firefox, Manifest V3)
 └── shared/      # Shared TypeScript types
 ```
 
@@ -102,7 +120,7 @@ packages/
 
 - **No data collection** — All data stays on your machine
 - **Local only** — Server runs on localhost, no external connections
-- **Chrome sync** — Blocked sites list syncs via your Chrome account (if enabled)
+- **Browser sync** — Blocked sites list syncs via your browser account if sync storage is enabled
 
 See [PRIVACY.md](PRIVACY.md) for full privacy policy.
 

@@ -23,7 +23,8 @@
   "scripts": {
     "build": "tsup src/bin.ts src/server.ts --format esm --dts --clean",
     "dev": "tsx src/bin.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test test/**/*.test.ts"
   },
   "dependencies": {
     "ws": "^8.18.0"

@@ -3,16 +3,28 @@ import { SESSION_TIMEOUT_MS, USER_INPUT_TOOLS } from "./types.js";
 
 type StateChangeCallback = (message: ServerMessage) => void;
 
-class SessionState {
+interface SessionStateOptions {
+  autoCleanup?: boolean;
+  cleanupIntervalMs?: number;
+  now?: () => number;
+}
+
+export class SessionState {
   private sessions: Map<string, Session> = new Map();
   private listeners: Set<StateChangeCallback> = new Set();
   private cleanupInterval: NodeJS.Timeout | null = null;
+  private readonly now: () => number;
 
-  constructor() {
+  constructor(options: SessionStateOptions = {}) {
+    this.now = options.now ?? Date.now;
+
     // Start cleanup interval for stale sessions
-    this.cleanupInterval = setInterval(() => {
-      this.cleanupStaleSessions();
-    }, 30_000); // Check every 30 seconds
+    if (options.autoCleanup ?? true) {
+      this.cleanupInterval = setInterval(() => {
+        this.cleanupStaleSessions();
+      }, options.cleanupIntervalMs ?? 30_000); // Check every 30 seconds
+      this.cleanupInterval.unref?.();
+    }
   }
 
   subscribe(callback: StateChangeCallback): () => void {
@@ -37,7 +49,7 @@ class SessionState {
     ).length;
     return {
       type: "state",
-      blocked: working === 0,
+      blocked: working === 0 && waitingForInput === 0,
       sessions: sessions.length,
       working,
       waitingForInput,
@@ -52,7 +64,7 @@ class SessionState {
         this.sessions.set(session_id, {
           id: session_id,
           status: "idle",
-          lastActivity: new Date(),
+          lastActivity: new Date(this.now()),
           cwd: payload.cwd,
         });
         console.log("Claude Code session connected");
@@ -68,7 +80,7 @@ class SessionState {
         const promptSession = this.sessions.get(session_id)!;
         promptSession.status = "working";
         promptSession.waitingForInputSince = undefined;
-        promptSession.lastActivity = new Date();
+        promptSession.lastActivity = new Date(this.now());
         break;
 
       case "PreToolUse":
@@ -77,10 +89,10 @@ class SessionState {
         // Check if this is a user input tool
         if (payload.tool_name && USER_INPUT_TOOLS.includes(payload.tool_name)) {
           toolSession.status = "waiting_for_input";
-          toolSession.waitingForInputSince = new Date();
+          toolSession.waitingForInputSince = new Date(this.now());
         } else if (toolSession.status === "waiting_for_input") {
           // If waiting for input, only reset after 500ms (to ignore immediate tool calls like Edit)
-          const elapsed = Date.now() - (toolSession.waitingForInputSince?.getTime() ?? 0);
+          const elapsed = this.now() - (toolSession.waitingForInputSince?.getTime() ?? 0);
           if (elapsed > 500) {
             toolSession.status = "working";
             toolSession.waitingForInputSince = undefined;
@@ -88,7 +100,7 @@ class SessionState {
         } else {
           toolSession.status = "working";
         }
-        toolSession.lastActivity = new Date();
+        toolSession.lastActivity = new Date(this.now());
         break;
 
       case "Stop":
@@ -96,7 +108,7 @@ class SessionState {
         const idleSession = this.sessions.get(session_id)!;
         if (idleSession.status === "waiting_for_input") {
           // If waiting for input, only reset after 500ms (to ignore immediate Stop after AskUserQuestion)
-          const elapsed = Date.now() - (idleSession.waitingForInputSince?.getTime() ?? 0);
+          const elapsed = this.now() - (idleSession.waitingForInputSince?.getTime() ?? 0);
           if (elapsed > 500) {
             idleSession.status = "idle";
             idleSession.waitingForInputSince = undefined;
@@ -104,7 +116,7 @@ class SessionState {
         } else {
           idleSession.status = "idle";
         }
-        idleSession.lastActivity = new Date();
+        idleSession.lastActivity = new Date(this.now());
         break;
     }
 
@@ -116,7 +128,7 @@ class SessionState {
       this.sessions.set(sessionId, {
         id: sessionId,
         status: "idle",
-        lastActivity: new Date(),
+        lastActivity: new Date(this.now()),
         cwd,
       });
       console.log("Claude Code session connected");
@@ -124,7 +136,7 @@ class SessionState {
   }
 
   private cleanupStaleSessions(): void {
-    const now = Date.now();
+    const now = this.now();
     let removed = 0;
 
     for (const [id, session] of this.sessions) {
@@ -139,12 +151,26 @@ class SessionState {
     }
   }
 
-  getStatus(): { blocked: boolean; sessions: Session[] } {
+  cleanupStaleSessionsNow(): void {
+    this.cleanupStaleSessions();
+  }
+
+  getStatus(): {
+    blocked: boolean;
+    sessions: Session[];
+    working: number;
+    waitingForInput: number;
+  } {
     const sessions = Array.from(this.sessions.values());
     const working = sessions.filter((s) => s.status === "working").length;
+    const waitingForInput = sessions.filter(
+      (s) => s.status === "waiting_for_input"
+    ).length;
     return {
-      blocked: working === 0,
+      blocked: working === 0 && waitingForInput === 0,
       sessions,
+      working,
+      waitingForInput,
     };
   }
 

@@ -1,6 +1,5 @@
-export {};
+import { DEFAULT_PORT } from "@claude-blocker/shared";
 
-const WS_URL = "ws://localhost:8765/ws";
 const KEEPALIVE_INTERVAL = 20_000;
 const RECONNECT_BASE_DELAY = 1_000;
 const RECONNECT_MAX_DELAY = 30_000;
@@ -12,6 +11,7 @@ interface State {
   working: number;
   waitingForInput: number;
   bypassUntil: number | null;
+  serverPort: number;
 }
 
 const state: State = {
@@ -20,6 +20,7 @@ const state: State = {
   working: 0,
   waitingForInput: 0,
   bypassUntil: null,
+  serverPort: DEFAULT_PORT,
 };
 
 let websocket: WebSocket | null = null;
@@ -27,12 +28,39 @@ let keepaliveInterval: ReturnType<typeof setInterval> | null = null;
 let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
 let retryCount = 0;
 
-// Load bypass from storage on startup
-chrome.storage.sync.get(["bypassUntil"], (result) => {
-  if (result.bypassUntil && result.bypassUntil > Date.now()) {
-    state.bypassUntil = result.bypassUntil;
+function isValidPort(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value > 0 && value < 65536;
+}
+
+function getWebSocketUrl(): string {
+  return `ws://localhost:${state.serverPort}/ws`;
+}
+
+function disconnectSocket(): void {
+  if (!websocket) return;
+
+  websocket.onopen = null;
+  websocket.onmessage = null;
+  websocket.onclose = null;
+  websocket.onerror = null;
+  websocket.close();
+  websocket = null;
+}
+
+function reconnectNow(): void {
+  state.serverConnected = false;
+  stopKeepalive();
+
+  if (reconnectTimeout) {
+    clearTimeout(reconnectTimeout);
+    reconnectTimeout = null;
   }
-});
+
+  disconnectSocket();
+  retryCount = 0;
+  broadcast();
+  connect();
+}
 
 // Compute derived state
 function getPublicState() {
@@ -49,6 +77,7 @@ function getPublicState() {
     blocked: shouldBlock,
     bypassActive,
     bypassUntil: state.bypassUntil,
+    serverPort: state.serverPort,
   };
 }
 
@@ -70,10 +99,10 @@ function connect() {
   if (websocket?.readyState === WebSocket.CONNECTING) return;
 
   try {
-    websocket = new WebSocket(WS_URL);
+    websocket = new WebSocket(getWebSocketUrl());
 
     websocket.onopen = () => {
-      console.log("[Claude Blocker] Connected");
+      console.log(`[Claude Blocker] Connected on port ${state.serverPort}`);
       state.serverConnected = true;
       retryCount = 0;
       startKeepalive();
@@ -93,7 +122,7 @@ function connect() {
     };
 
     websocket.onclose = () => {
-      console.log("[Claude Blocker] Disconnected");
+      console.log(`[Claude Blocker] Disconnected from port ${state.serverPort}`);
       state.serverConnected = false;
       stopKeepalive();
       broadcast();
@@ -154,6 +183,27 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === "SET_SERVER_PORT") {
+    const nextPort = Number(message.port);
+    if (!isValidPort(nextPort)) {
+      sendResponse({ success: false, reason: "Invalid port" });
+      return true;
+    }
+
+    if (nextPort === state.serverPort) {
+      sendResponse({ success: true });
+      return true;
+    }
+
+    state.serverPort = nextPort;
+    chrome.storage.sync.set({ serverPort: nextPort }, () => {
+      reconnectNow();
+      sendResponse({ success: true });
+    });
+
+    return true;
+  }
+
   if (message.type === "GET_BYPASS_STATUS") {
     const today = new Date().toDateString();
     chrome.storage.sync.get(["lastBypassDate"], (result) => {
@@ -169,6 +219,17 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   return false;
 });
 
+// Keep service worker synced if storage changes elsewhere
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName !== "sync") return;
+
+  const changedPort = changes.serverPort?.newValue;
+  if (isValidPort(changedPort) && changedPort !== state.serverPort) {
+    state.serverPort = changedPort;
+    reconnectNow();
+  }
+});
+
 // Check bypass expiry
 setInterval(() => {
   if (state.bypassUntil && state.bypassUntil <= Date.now()) {
@@ -179,4 +240,14 @@ setInterval(() => {
 }, 5000);
 
 // Start
-connect();
+chrome.storage.sync.get(["bypassUntil", "serverPort"], (result) => {
+  if (typeof result.bypassUntil === "number" && result.bypassUntil > Date.now()) {
+    state.bypassUntil = result.bypassUntil;
+  }
+
+  if (isValidPort(result.serverPort)) {
+    state.serverPort = result.serverPort;
+  }
+
+  connect();
+});
