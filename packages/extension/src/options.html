@@ -122,9 +122,36 @@
           <div class="section-header">
             <div class="section-title">
               <h2>Emergency Bypass</h2>
-              <p class="section-desc">Get 5 minutes of unblocked access (once per day)</p>
+              <p class="section-desc">Configure daily unlock count and each unlock duration</p>
             </div>
           </div>
+
+          <form class="bypass-settings-form" id="bypass-settings-form">
+            <label class="config-field">
+              <span>Unlocks Per Day</span>
+              <input
+                type="number"
+                id="bypass-max-unlocks-input"
+                min="1"
+                max="20"
+                step="1"
+              />
+            </label>
+            <label class="config-field">
+              <span>Unlock Duration (Minutes)</span>
+              <input
+                type="number"
+                id="bypass-duration-input"
+                min="1"
+                max="180"
+                step="1"
+              />
+            </label>
+            <button type="submit" class="add-btn">
+              <span>Save Unlock Settings</span>
+            </button>
+          </form>
+          <p class="bypass-settings-status" id="bypass-settings-status">Loading...</p>
 
           <button class="bypass-btn" id="bypass-btn" disabled>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

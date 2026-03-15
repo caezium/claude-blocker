@@ -80,6 +80,7 @@ npx claude-blocker --help
 4. **Extension** (Chrome/Firefox) — Connects to the server and:
    - Blocks configured sites when no sessions are working
    - Shows a modal overlay (soft block, not network block)
+   - Supports configurable bypass unlock duration and unlocks/day
    - Updates in real-time without page refresh
 
 ## API
@@ -93,7 +94,7 @@ npx claude-blocker --help
 
 ### WebSocket
 
-Connect to `ws://localhost:8765/ws` to receive real-time state updates:
+Connect to `ws://127.0.0.1:8765/ws` to receive real-time state updates:
 
 ```json
 {

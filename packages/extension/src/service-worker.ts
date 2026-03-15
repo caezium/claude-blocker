@@ -1,8 +1,15 @@
 import { DEFAULT_PORT } from "@claude-blocker/shared";
 
 const KEEPALIVE_INTERVAL = 20_000;
+const STATUS_POLL_INTERVAL = 5_000;
 const RECONNECT_BASE_DELAY = 1_000;
 const RECONNECT_MAX_DELAY = 30_000;
+const DEFAULT_BYPASS_DURATION_MINUTES = 5;
+const DEFAULT_BYPASS_MAX_UNLOCKS_PER_DAY = 1;
+const MIN_BYPASS_DURATION_MINUTES = 1;
+const MAX_BYPASS_DURATION_MINUTES = 180;
+const MIN_BYPASS_MAX_UNLOCKS_PER_DAY = 1;
+const MAX_BYPASS_MAX_UNLOCKS_PER_DAY = 20;
 
 // The actual state - service worker is single source of truth
 interface State {
@@ -25,6 +32,7 @@ const state: State = {
 
 let websocket: WebSocket | null = null;
 let keepaliveInterval: ReturnType<typeof setInterval> | null = null;
+let statusPollInterval: ReturnType<typeof setInterval> | null = null;
 let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
 let retryCount = 0;
 
@@ -32,8 +40,66 @@ function isValidPort(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value > 0 && value < 65536;
 }
 
+function parseBypassDuration(value: unknown): number {
+  if (typeof value === "number" && Number.isInteger(value)) {
+    return Math.min(MAX_BYPASS_DURATION_MINUTES, Math.max(MIN_BYPASS_DURATION_MINUTES, value));
+  }
+  return DEFAULT_BYPASS_DURATION_MINUTES;
+}
+
+function parseBypassMaxUnlocks(value: unknown): number {
+  if (typeof value === "number" && Number.isInteger(value)) {
+    return Math.min(MAX_BYPASS_MAX_UNLOCKS_PER_DAY, Math.max(MIN_BYPASS_MAX_UNLOCKS_PER_DAY, value));
+  }
+  return DEFAULT_BYPASS_MAX_UNLOCKS_PER_DAY;
+}
+
+function parseBypassUsageCount(value: unknown): number {
+  if (typeof value === "number" && Number.isInteger(value) && value >= 0) {
+    return value;
+  }
+  return 0;
+}
+
+function todayKey(): string {
+  return new Date().toDateString();
+}
+
+function getBypassStateFromStorage(
+  result: Record<string, unknown>,
+): {
+  durationMinutes: number;
+  maxUnlocksPerDay: number;
+  usesToday: number;
+} {
+  const durationMinutes = parseBypassDuration(result.bypassDurationMinutes);
+  const maxUnlocksPerDay = parseBypassMaxUnlocks(result.bypassMaxUnlocksPerDay);
+  const usageDate = typeof result.bypassUsageDate === "string" ? result.bypassUsageDate : null;
+  const usageCount = parseBypassUsageCount(result.bypassUsageCount);
+  const legacyLastBypassDate =
+    typeof result.lastBypassDate === "string" ? result.lastBypassDate : null;
+  const today = todayKey();
+
+  let usesToday = 0;
+  if (usageDate === today) {
+    usesToday = usageCount;
+  } else if (legacyLastBypassDate === today) {
+    usesToday = 1;
+  }
+
+  usesToday = Math.min(usesToday, maxUnlocksPerDay);
+
+  return {
+    durationMinutes,
+    maxUnlocksPerDay,
+    usesToday,
+  };
+}
+
 function getWebSocketUrl(): string {
-  return `ws://localhost:${state.serverPort}/ws`;
+  // Use explicit IPv4 loopback because the server binds 127.0.0.1.
+  // Firefox may resolve localhost to ::1 first, which causes false "offline" state.
+  return `ws://127.0.0.1:${state.serverPort}/ws`;
 }
 
 function disconnectSocket(): void {
@@ -59,6 +125,7 @@ function reconnectNow(): void {
   disconnectSocket();
   retryCount = 0;
   broadcast();
+  void pollServerStatusOnce();
   connect();
 }
 
@@ -87,7 +154,10 @@ function broadcast() {
   chrome.tabs.query({}, (tabs) => {
     for (const tab of tabs) {
       if (tab.id) {
-        chrome.tabs.sendMessage(tab.id, { type: "STATE", ...publicState }).catch(() => {});
+        chrome.tabs.sendMessage(tab.id, { type: "STATE", ...publicState }, () => {
+          // Ignore errors from tabs without content script (e.g. about:, chrome://)
+          void chrome.runtime.lastError;
+        });
       }
     }
   });
@@ -123,17 +193,17 @@ function connect() {
 
     websocket.onclose = () => {
       console.log(`[Claude Blocker] Disconnected from port ${state.serverPort}`);
-      state.serverConnected = false;
       stopKeepalive();
-      broadcast();
+      void pollServerStatusOnce();
       scheduleReconnect();
     };
 
     websocket.onerror = () => {
-      state.serverConnected = false;
       stopKeepalive();
+      void pollServerStatusOnce();
     };
   } catch {
+    void pollServerStatusOnce();
     scheduleReconnect();
   }
 }
@@ -161,6 +231,65 @@ function scheduleReconnect() {
   reconnectTimeout = setTimeout(connect, delay);
 }
 
+async function pollServerStatusOnce(): Promise<void> {
+  try {
+    const response = await fetch(`http://127.0.0.1:${state.serverPort}/status`, {
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      throw new Error(`status ${response.status}`);
+    }
+
+    const payload = (await response.json()) as {
+      sessions?: unknown;
+      working?: unknown;
+      waitingForInput?: unknown;
+    };
+
+    const sessions = Array.isArray(payload.sessions)
+      ? payload.sessions.length
+      : typeof payload.sessions === "number"
+        ? payload.sessions
+        : state.sessions;
+    const working = typeof payload.working === "number" ? payload.working : state.working;
+    const waitingForInput =
+      typeof payload.waitingForInput === "number"
+        ? payload.waitingForInput
+        : state.waitingForInput;
+
+    const changed =
+      !state.serverConnected ||
+      state.sessions !== sessions ||
+      state.working !== working ||
+      state.waitingForInput !== waitingForInput;
+
+    state.serverConnected = true;
+    state.sessions = sessions;
+    state.working = working;
+    state.waitingForInput = waitingForInput;
+
+    if (changed) {
+      broadcast();
+    }
+  } catch {
+    const wsOpen = websocket?.readyState === WebSocket.OPEN;
+    if (!wsOpen && state.serverConnected) {
+      state.serverConnected = false;
+      broadcast();
+    }
+  }
+}
+
+function startStatusPolling(): void {
+  if (statusPollInterval) {
+    clearInterval(statusPollInterval);
+  }
+  statusPollInterval = setInterval(() => {
+    void pollServerStatusOnce();
+  }, STATUS_POLL_INTERVAL);
+  void pollServerStatusOnce();
+}
+
 // Handle messages from content scripts
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === "GET_STATE") {
@@ -169,17 +298,118 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
 
   if (message.type === "ACTIVATE_BYPASS") {
-    const today = new Date().toDateString();
-    chrome.storage.sync.get(["lastBypassDate"], (result) => {
-      if (result.lastBypassDate === today) {
-        sendResponse({ success: false, reason: "Already used today" });
-        return;
-      }
-      state.bypassUntil = Date.now() + 5 * 60 * 1000;
-      chrome.storage.sync.set({ bypassUntil: state.bypassUntil, lastBypassDate: today });
-      broadcast();
-      sendResponse({ success: true });
-    });
+    chrome.storage.sync.get(
+      [
+        "bypassDurationMinutes",
+        "bypassMaxUnlocksPerDay",
+        "bypassUsageDate",
+        "bypassUsageCount",
+        "lastBypassDate",
+      ],
+      (result) => {
+        const { durationMinutes, maxUnlocksPerDay, usesToday } = getBypassStateFromStorage(result);
+        if (usesToday >= maxUnlocksPerDay) {
+          sendResponse({ success: false, reason: "No unlocks left today" });
+          return;
+        }
+
+        const nextUsesToday = usesToday + 1;
+        const nextBypassUntil = Date.now() + durationMinutes * 60 * 1000;
+        state.bypassUntil = nextBypassUntil;
+
+        chrome.storage.sync.set(
+          {
+            bypassUntil: nextBypassUntil,
+            bypassUsageDate: todayKey(),
+            bypassUsageCount: nextUsesToday,
+            // Keep legacy key populated for backward compatibility.
+            lastBypassDate: todayKey(),
+          },
+          () => {
+            broadcast();
+            sendResponse({
+              success: true,
+              bypassUntil: nextBypassUntil,
+              usesToday: nextUsesToday,
+              remainingUses: maxUnlocksPerDay - nextUsesToday,
+              maxUnlocksPerDay,
+              durationMinutes,
+            });
+          },
+        );
+      },
+    );
+    return true;
+  }
+
+  if (message.type === "SET_BYPASS_SETTINGS") {
+    const requestedDuration = Number(message.durationMinutes);
+    const requestedMaxUnlocks = Number(message.maxUnlocksPerDay);
+
+    if (
+      !Number.isInteger(requestedDuration) ||
+      requestedDuration < MIN_BYPASS_DURATION_MINUTES ||
+      requestedDuration > MAX_BYPASS_DURATION_MINUTES
+    ) {
+      sendResponse({
+        success: false,
+        reason: `Duration must be ${MIN_BYPASS_DURATION_MINUTES}-${MAX_BYPASS_DURATION_MINUTES} minutes`,
+      });
+      return true;
+    }
+
+    if (
+      !Number.isInteger(requestedMaxUnlocks) ||
+      requestedMaxUnlocks < MIN_BYPASS_MAX_UNLOCKS_PER_DAY ||
+      requestedMaxUnlocks > MAX_BYPASS_MAX_UNLOCKS_PER_DAY
+    ) {
+      sendResponse({
+        success: false,
+        reason: `Unlocks/day must be ${MIN_BYPASS_MAX_UNLOCKS_PER_DAY}-${MAX_BYPASS_MAX_UNLOCKS_PER_DAY}`,
+      });
+      return true;
+    }
+
+    chrome.storage.sync.set(
+      {
+        bypassDurationMinutes: requestedDuration,
+        bypassMaxUnlocksPerDay: requestedMaxUnlocks,
+      },
+      () => {
+        sendResponse({
+          success: true,
+          durationMinutes: requestedDuration,
+          maxUnlocksPerDay: requestedMaxUnlocks,
+        });
+      },
+    );
+    return true;
+  }
+
+  if (message.type === "GET_BYPASS_STATUS") {
+    chrome.storage.sync.get(
+      [
+        "bypassDurationMinutes",
+        "bypassMaxUnlocksPerDay",
+        "bypassUsageDate",
+        "bypassUsageCount",
+        "lastBypassDate",
+      ],
+      (result) => {
+        const { durationMinutes, maxUnlocksPerDay, usesToday } = getBypassStateFromStorage(result);
+        const remainingUses = Math.max(0, maxUnlocksPerDay - usesToday);
+
+        sendResponse({
+          usedToday: usesToday > 0,
+          usesToday,
+          remainingUses,
+          maxUnlocksPerDay,
+          durationMinutes,
+          bypassActive: state.bypassUntil !== null && state.bypassUntil > Date.now(),
+          bypassUntil: state.bypassUntil,
+        });
+      },
+    );
     return true;
   }
 
@@ -201,18 +431,6 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       sendResponse({ success: true });
     });
 
-    return true;
-  }
-
-  if (message.type === "GET_BYPASS_STATUS") {
-    const today = new Date().toDateString();
-    chrome.storage.sync.get(["lastBypassDate"], (result) => {
-      sendResponse({
-        usedToday: result.lastBypassDate === today,
-        bypassActive: state.bypassUntil !== null && state.bypassUntil > Date.now(),
-        bypassUntil: state.bypassUntil,
-      });
-    });
     return true;
   }
 
@@ -249,5 +467,6 @@ chrome.storage.sync.get(["bypassUntil", "serverPort"], (result) => {
     state.serverPort = result.serverPort;
   }
 
+  startStatusPolling();
   connect();
 });

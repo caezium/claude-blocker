@@ -13,6 +13,13 @@ interface PublicState {
   bypassActive: boolean;
 }
 
+interface BypassStatus {
+  bypassActive: boolean;
+  remainingUses: number;
+  maxUnlocksPerDay: number;
+  durationMinutes: number;
+}
+
 // Track current state so we can re-render if modal gets removed
 let lastKnownState: PublicState | null = null;
 let shouldBeBlocked = false;
@@ -45,6 +52,42 @@ function getShadow(): ShadowRoot | null {
   return getModal()?.shadowRoot ?? null;
 }
 
+function refreshModalBypassButton(shadow: ShadowRoot): void {
+  const bypassBtn = shadow.getElementById("bypass-btn");
+  if (!bypassBtn) return;
+
+  chrome.runtime.sendMessage({ type: "GET_BYPASS_STATUS" }, (status: BypassStatus) => {
+    if (chrome.runtime.lastError || !status) {
+      bypassBtn.textContent = "Bypass unavailable";
+      (bypassBtn as HTMLButtonElement).disabled = true;
+      bypassBtn.style.opacity = "0.5";
+      bypassBtn.style.cursor = "not-allowed";
+      return;
+    }
+
+    if (status.bypassActive) {
+      bypassBtn.textContent = "Bypass already active";
+      (bypassBtn as HTMLButtonElement).disabled = true;
+      bypassBtn.style.opacity = "0.5";
+      bypassBtn.style.cursor = "not-allowed";
+      return;
+    }
+
+    if (status.remainingUses <= 0) {
+      bypassBtn.textContent = "No unlocks left today";
+      (bypassBtn as HTMLButtonElement).disabled = true;
+      bypassBtn.style.opacity = "0.5";
+      bypassBtn.style.cursor = "not-allowed";
+      return;
+    }
+
+    bypassBtn.textContent = `Give me ${status.durationMinutes} minutes (${status.remainingUses}/${status.maxUnlocksPerDay} left today)`;
+    (bypassBtn as HTMLButtonElement).disabled = false;
+    bypassBtn.style.opacity = "1";
+    bypassBtn.style.cursor = "pointer";
+  });
+}
+
 function createModal(): void {
   if (getModal()) return;
 
@@ -68,7 +111,7 @@ function createModal(): void {
         </div>
         <div id="hint" style="margin-top:24px;font-size:13px;color:#555;line-height:1.4;font-family:Arial,Helvetica,sans-serif;"></div>
         <button id="bypass-btn" style="all:initial;margin-top:24px;padding:12px 24px;background:#333;border:1px solid #444;border-radius:8px;color:#888;font-family:Arial,Helvetica,sans-serif;font-size:13px;cursor:pointer;transition:all 0.2s;">
-          Give me 5 minutes (1x per day)
+          Checking bypass options...
         </button>
       </div>
     </div>
@@ -77,26 +120,16 @@ function createModal(): void {
   // Wire up bypass button
   const bypassBtn = shadow.getElementById("bypass-btn");
   if (bypassBtn) {
-    // Check if already used today
-    chrome.runtime.sendMessage({ type: "GET_BYPASS_STATUS" }, (status) => {
-      if (status?.usedToday) {
-        bypassBtn.textContent = "Bypass already used today";
-        (bypassBtn as HTMLButtonElement).disabled = true;
-        bypassBtn.style.opacity = "0.5";
-        bypassBtn.style.cursor = "not-allowed";
-      }
-    });
+    refreshModalBypassButton(shadow);
 
     bypassBtn.addEventListener("click", () => {
       chrome.runtime.sendMessage({ type: "ACTIVATE_BYPASS" }, (response) => {
         if (response?.success) {
           removeModal();
-        } else if (response?.reason) {
-          bypassBtn.textContent = response.reason;
-          (bypassBtn as HTMLButtonElement).disabled = true;
-          bypassBtn.style.opacity = "0.5";
-          bypassBtn.style.cursor = "not-allowed";
+          return;
         }
+
+        refreshModalBypassButton(shadow);
       });
     });
 

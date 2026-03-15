@@ -424,6 +424,56 @@ section {
   background: linear-gradient(135deg, var(--bg-base), var(--bg-elevated));
 }
 
+.bypass-settings-form {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 12px;
+  align-items: end;
+  margin-bottom: 12px;
+}
+
+.config-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.config-field span {
+  font-size: 12px;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.config-field input {
+  width: 100%;
+  padding: 12px 14px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  color: var(--text-primary);
+  outline: none;
+  transition: all 0.2s ease;
+}
+
+.config-field input:focus {
+  border-color: var(--border-strong);
+  background: var(--bg-hover);
+}
+
+.config-field input.error {
+  border-color: var(--accent-red);
+  animation: shake 0.4s ease-in-out;
+}
+
+.bypass-settings-status {
+  margin-bottom: 16px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
 .bypass-btn {
   display: flex;
   align-items: center;
@@ -521,6 +571,10 @@ footer p {
 
   .server-port-form {
     flex-direction: column;
+  }
+
+  .bypass-settings-form {
+    grid-template-columns: 1fr;
   }
 
   .add-btn {

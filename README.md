@@ -62,11 +62,16 @@ For Firefox:
 - Open `about:debugging#/runtime/this-firefox`
 - Click **Load Temporary Add-on...**
 - Select `packages/extension/dist-firefox/manifest.json`
+- Firefox compatibility note: this build uses `background.scripts` (not `background.service_worker`) for temporary add-on support.
+- Connection note: extension connects to `127.0.0.1` loopback (`ws://127.0.0.1:<port>/ws`).
 
 ### 3. Configure blocked sites
 
 Click the extension icon → Settings to add sites you want blocked when Claude is idle.
 If you run the server on a non-default port, set the same value in extension Settings → Server Port.
+In Settings → Emergency Bypass, you can configure:
+- Unlocks per day
+- Unlock duration (minutes)
 
 Default blocked sites: `x.com`, `youtube.com`
 
@@ -108,7 +113,7 @@ npx claude-blocker --help
 - **Soft blocking** — Sites show a modal overlay, not a hard block
 - **Real-time updates** — No page refresh needed when state changes
 - **Multi-session support** — Tracks multiple Claude Code instances
-- **Emergency bypass** — 5-minute bypass, once per day
+- **Emergency bypass** — Configurable unlock duration and unlocks per day
 - **Configurable sites** — Add/remove sites from extension settings
 - **Works offline** — Blocks everything when server isn't running (safety default)
 
@@ -140,6 +145,16 @@ packages/
 ├── server/      # Node.js server + CLI (published to npm)
 ├── extension/   # Browser extension (Chrome + Firefox, Manifest V3)
 └── shared/      # Shared TypeScript types
+```
+
+### Running From This Repo
+
+If you are running from a local clone (not installed globally), use:
+
+```bash
+pnpm --filter claude-blocker dev -- --provider t3
+# or built binary:
+node packages/server/dist/bin.js --provider t3
 ```
 
 ## Privacy

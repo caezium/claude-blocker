@@ -11,6 +11,10 @@ interface ExtensionState {
 
 interface BypassStatus {
   usedToday: boolean;
+  usesToday: number;
+  remainingUses: number;
+  maxUnlocksPerDay: number;
+  durationMinutes: number;
   bypassActive: boolean;
   bypassUntil: number | null;
 }
@@ -28,6 +32,10 @@ const siteCount = document.getElementById("site-count") as HTMLElement;
 const bypassBtn = document.getElementById("bypass-btn") as HTMLButtonElement;
 const bypassText = document.getElementById("bypass-text") as HTMLElement;
 const bypassStatus = document.getElementById("bypass-status") as HTMLElement;
+const bypassSettingsForm = document.getElementById("bypass-settings-form") as HTMLFormElement;
+const bypassMaxUnlocksInput = document.getElementById("bypass-max-unlocks-input") as HTMLInputElement;
+const bypassDurationInput = document.getElementById("bypass-duration-input") as HTMLInputElement;
+const bypassSettingsStatus = document.getElementById("bypass-settings-status") as HTMLElement;
 const serverPortForm = document.getElementById("server-port-form") as HTMLFormElement;
 const serverPortInput = document.getElementById("server-port-input") as HTMLInputElement;
 const serverPortStatus = document.getElementById("server-port-status") as HTMLElement;
@@ -37,6 +45,14 @@ let currentDomains: string[] = [];
 
 function isValidPort(port: number): boolean {
   return Number.isInteger(port) && port > 0 && port < 65536;
+}
+
+function isValidBypassMaxUnlocks(value: number): boolean {
+  return Number.isInteger(value) && value >= 1 && value <= 20;
+}
+
+function isValidBypassDuration(value: number): boolean {
+  return Number.isInteger(value) && value >= 1 && value <= 180;
 }
 
 // Load domains from storage
@@ -61,7 +77,9 @@ async function saveDomains(domains: string[]): Promise<void> {
       chrome.tabs.query({}, (tabs) => {
         for (const tab of tabs) {
           if (tab.id) {
-            chrome.tabs.sendMessage(tab.id, { type: "DOMAINS_UPDATED", domains }).catch(() => {});
+            chrome.tabs.sendMessage(tab.id, { type: "DOMAINS_UPDATED", domains }, () => {
+              void chrome.runtime.lastError;
+            });
           }
         }
       });
@@ -90,16 +108,42 @@ function setServerPortStatus(message: string, isError = false): void {
   serverPortStatus.style.color = isError ? "var(--accent-red)" : "var(--text-dim)";
 }
 
+function setBypassSettingsStatus(message: string, isError = false): void {
+  bypassSettingsStatus.textContent = message;
+  bypassSettingsStatus.style.color = isError ? "var(--accent-red)" : "var(--text-dim)";
+}
+
 function updateServerPort(port: number): void {
   chrome.runtime.sendMessage({ type: "SET_SERVER_PORT", port }, (response) => {
     if (response?.success) {
-      setServerPortStatus(`Using localhost:${port}`);
+      setServerPortStatus(`Using 127.0.0.1:${port}`);
       refreshState();
       return;
     }
 
     setServerPortStatus(response?.reason ?? "Failed to update port", true);
   });
+}
+
+function updateBypassSettings(maxUnlocksPerDay: number, durationMinutes: number): void {
+  chrome.runtime.sendMessage(
+    {
+      type: "SET_BYPASS_SETTINGS",
+      maxUnlocksPerDay,
+      durationMinutes,
+    },
+    (response) => {
+      if (response?.success) {
+        setBypassSettingsStatus(
+          `Saved: ${maxUnlocksPerDay} unlock${maxUnlocksPerDay === 1 ? "" : "s"}/day, ${durationMinutes} min each`,
+        );
+        refreshState();
+        return;
+      }
+
+      setBypassSettingsStatus(response?.reason ?? "Failed to save bypass settings", true);
+    },
+  );
 }
 
 // Render the domain list
@@ -230,17 +274,17 @@ function updateBypassButton(status: BypassStatus): void {
 
     updateCountdown();
     bypassCountdown = setInterval(updateCountdown, 1000);
-    bypassStatus.textContent = "Bypass will expire soon";
-  } else if (status.usedToday) {
+    bypassStatus.textContent = `${status.remainingUses} of ${status.maxUnlocksPerDay} unlocks left today`;
+  } else if (status.remainingUses <= 0) {
     bypassBtn.disabled = true;
     bypassBtn.classList.remove("active");
-    bypassText.textContent = "Bypass Used Today";
-    bypassStatus.textContent = "Resets at midnight";
+    bypassText.textContent = "No Unlocks Left Today";
+    bypassStatus.textContent = `Used ${status.usesToday}/${status.maxUnlocksPerDay} today · resets at midnight`;
   } else {
     bypassBtn.disabled = false;
     bypassBtn.classList.remove("active");
-    bypassText.textContent = "Activate Bypass";
-    bypassStatus.textContent = "5 minutes of unblocked access, once per day";
+    bypassText.textContent = `Activate ${status.durationMinutes}m Unlock`;
+    bypassStatus.textContent = `${status.remainingUses} of ${status.maxUnlocksPerDay} unlocks left today`;
   }
 }
 
@@ -249,12 +293,21 @@ function refreshState(): void {
   chrome.runtime.sendMessage({ type: "GET_STATE" }, (state: ExtensionState) => {
     if (state) {
       updateUI(state);
-      setServerPortStatus(`Using localhost:${state.serverPort ?? DEFAULT_PORT}`);
+      setServerPortStatus(`Using 127.0.0.1:${state.serverPort ?? DEFAULT_PORT}`);
     }
   });
 
   chrome.runtime.sendMessage({ type: "GET_BYPASS_STATUS" }, (status: BypassStatus) => {
     if (status) {
+      if (document.activeElement !== bypassMaxUnlocksInput) {
+        bypassMaxUnlocksInput.value = String(status.maxUnlocksPerDay);
+      }
+      if (document.activeElement !== bypassDurationInput) {
+        bypassDurationInput.value = String(status.durationMinutes);
+      }
+      setBypassSettingsStatus(
+        `Current: ${status.maxUnlocksPerDay} unlock${status.maxUnlocksPerDay === 1 ? "" : "s"}/day, ${status.durationMinutes} min each`,
+      );
       updateBypassButton(status);
     }
   });
@@ -279,6 +332,28 @@ addForm.addEventListener("submit", (e) => {
   addDomain(domainInput.value);
 });
 
+bypassSettingsForm.addEventListener("submit", (e) => {
+  e.preventDefault();
+  const maxUnlocksPerDay = Number(bypassMaxUnlocksInput.value);
+  const durationMinutes = Number(bypassDurationInput.value);
+
+  if (!isValidBypassMaxUnlocks(maxUnlocksPerDay)) {
+    setBypassSettingsStatus("Unlocks per day must be between 1 and 20", true);
+    bypassMaxUnlocksInput.classList.add("error");
+    setTimeout(() => bypassMaxUnlocksInput.classList.remove("error"), 400);
+    return;
+  }
+
+  if (!isValidBypassDuration(durationMinutes)) {
+    setBypassSettingsStatus("Unlock duration must be between 1 and 180 minutes", true);
+    bypassDurationInput.classList.add("error");
+    setTimeout(() => bypassDurationInput.classList.remove("error"), 400);
+    return;
+  }
+
+  updateBypassSettings(maxUnlocksPerDay, durationMinutes);
+});
+
 bypassBtn.addEventListener("click", () => {
   chrome.runtime.sendMessage({ type: "ACTIVATE_BYPASS" }, (response) => {
     if (response?.success) {
@@ -300,7 +375,7 @@ chrome.runtime.onMessage.addListener((message) => {
 async function init(): Promise<void> {
   currentDomains = await loadDomains();
   renderDomains();
-  setServerPortStatus(`Using localhost:${DEFAULT_PORT}`);
+  setServerPortStatus(`Using 127.0.0.1:${DEFAULT_PORT}`);
   refreshState();
 }
 
