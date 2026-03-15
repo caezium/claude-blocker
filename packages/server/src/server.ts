@@ -163,8 +163,11 @@ export function startServer(
   });
 
   server.listen(port, LOCALHOST_HOST, () => {
+    const effectiveT3Url = t3Adapter
+      ? redactToken(t3Adapter.resolvedUrl)
+      : redactToken(options.t3Url);
     const t3Line = t3Enabled
-      ? `│   T3 bridge: ${options.t3Url}${options.t3Token ? " (token)" : ""}`
+      ? `│   T3 bridge: ${effectiveT3Url}`
       : "│   T3 bridge: disabled";
     const modeLabel =
       options.provider === "auto"

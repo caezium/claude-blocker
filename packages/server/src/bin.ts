@@ -4,6 +4,7 @@ import { createInterface } from "readline";
 import { startServer } from "./server.js";
 import { setupHooks, removeHooks, areHooksConfigured } from "./setup.js";
 import { parseCliArgs, printHelp } from "./cli.js";
+import { detectT3DesktopWsUrl } from "./t3DesktopDiscovery.js";
 
 function prompt(question: string): Promise<string> {
   const rl = createInterface({
@@ -56,10 +57,26 @@ async function main(): Promise<void> {
     }
   }
 
+  let t3Url = cli.t3Url;
+  let t3Token = cli.t3Token;
+  const includesT3 = cli.provider === "auto" || cli.provider === "t3";
+  if (includesT3 && !cli.t3UrlProvided) {
+    const detectedDesktopUrl = detectT3DesktopWsUrl();
+    if (detectedDesktopUrl) {
+      t3Url = detectedDesktopUrl;
+      t3Token = undefined;
+      const displayUrl = new URL(detectedDesktopUrl);
+      if (displayUrl.searchParams.has("token")) {
+        displayUrl.searchParams.set("token", "***");
+      }
+      console.log(`Detected T3 Desktop backend: ${displayUrl.toString()}`);
+    }
+  }
+
   startServer(cli.port, {
     provider: cli.provider,
-    t3Url: cli.t3Url,
-    t3Token: cli.t3Token,
+    t3Url,
+    t3Token,
   });
 }
 

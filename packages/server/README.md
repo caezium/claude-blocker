@@ -34,6 +34,8 @@ npx claude-blocker
 # Start T3-only mode
 npx claude-blocker --provider t3
 
+# On macOS, T3 Desktop backend is auto-detected if --t3-url is not provided
+
 # Explicit provider mode
 npx claude-blocker --provider auto
 npx claude-blocker --provider claude

@@ -5,6 +5,7 @@ export interface CliOptions {
   port: number;
   provider: ProviderMode;
   t3Url: string;
+  t3UrlProvided: boolean;
   t3Token?: string;
   setup: boolean;
   remove: boolean;
@@ -55,6 +56,7 @@ export function parseCliArgs(args: string[]): CliOptions {
   }
 
   let t3Url = DEFAULT_T3_WS_URL;
+  let t3UrlProvided = false;
   const t3UrlIndex = args.indexOf("--t3-url");
   if (t3UrlIndex !== -1) {
     const candidate = args[t3UrlIndex + 1];
@@ -67,6 +69,7 @@ export function parseCliArgs(args: string[]): CliOptions {
         throw new Error("invalid protocol");
       }
       t3Url = parsed.toString();
+      t3UrlProvided = true;
     } catch {
       throw new Error("Invalid T3 URL. Expected ws:// or wss:// URL");
     }
@@ -86,6 +89,7 @@ export function parseCliArgs(args: string[]): CliOptions {
     port,
     provider,
     t3Url,
+    t3UrlProvided,
     t3Token,
     setup,
     remove,

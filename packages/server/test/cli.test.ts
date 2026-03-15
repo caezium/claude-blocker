@@ -7,6 +7,7 @@ test("parseCliArgs returns defaults", () => {
   assert.equal(parsed.port, 8765);
   assert.equal(parsed.provider, "auto");
   assert.equal(parsed.t3Url, "ws://127.0.0.1:3773");
+  assert.equal(parsed.t3UrlProvided, false);
   assert.equal(parsed.setup, false);
   assert.equal(parsed.remove, false);
   assert.equal(parsed.help, false);
@@ -25,6 +26,7 @@ test("parseCliArgs parses provider and t3 options", () => {
   ]);
   assert.equal(parsed.provider, "t3");
   assert.equal(parsed.t3Url, "ws://localhost:3773/");
+  assert.equal(parsed.t3UrlProvided, true);
   assert.equal(parsed.t3Token, "secret");
   assert.equal(parsed.port, 9000);
 });

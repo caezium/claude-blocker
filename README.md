@@ -49,6 +49,9 @@ For T3-first mode (Codex in T3 app), run:
 npx claude-blocker --provider t3
 ```
 
+On macOS, this now auto-detects the T3 Desktop backend URL/token when available.
+Use `--t3-url` to force a specific endpoint.
+
 ### 2. Install the browser extension
 
 For Chrome/Chromium:
