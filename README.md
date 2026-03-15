@@ -1,15 +1,21 @@
 # Claude Blocker
 
-Block distracting websites unless [Claude Code](https://claude.ai/claude-code) is actively running inference.
+Block distracting websites unless your coding agent is actively running inference.
 
-**The premise is simple:** if Claude is working, you should be too. When Claude stops, your distractions come back.
+Supports:
+- [Claude Code](https://claude.ai/claude-code) via hooks
+- [T3 Code](https://github.com/pingdotgg/t3code) via websocket bridge (Codex-backed)
+
+Note: standalone Codex CLI hook mode is not in this phase. Codex support here is through T3 Code.
+
+**The premise is simple:** if your agent is working, you should be too. When it stops, your distractions come back.
 
 ## How It Works
 
 ```
 ┌─────────────────┐     hooks      ┌─────────────────┐    websocket    ┌─────────────────┐
-│   Claude Code   │ ─────────────► │  Blocker Server │ ◄─────────────► │Browser Extension│
-│   (terminal)    │                │  (localhost)    │                 │   (browser)     │
+│ Claude or T3    │ ─────────────► │  Blocker Server │ ◄─────────────► │Browser Extension│
+│ (Codex via T3)  │                │  (localhost)    │                 │   (browser)     │
 └─────────────────┘                └─────────────────┘                 └─────────────────┘
        │                                   │                                   │
        │ UserPromptSubmit                  │ tracks sessions                   │ blocks sites
@@ -18,8 +24,8 @@ Block distracting websites unless [Claude Code](https://claude.ai/claude-code) i
        └───────────────────────────────────┴───────────────────────────────────┘
 ```
 
-1. **Claude Code hooks** notify the server when you submit a prompt or when Claude finishes
-2. **Blocker server** tracks all Claude Code sessions and their working/idle states
+1. **Claude hooks or T3 events** notify the server when work starts/stops or needs input
+2. **Blocker server** tracks provider sessions and their working/idle states
 3. **Browser extension** blocks configured sites when no session is actively working
 
 ## Quick Start
@@ -35,6 +41,12 @@ Then start the server:
 
 ```bash
 npx claude-blocker
+```
+
+For T3-first mode (Codex in T3 app), run:
+
+```bash
+npx claude-blocker --provider t3
 ```
 
 ### 2. Install the browser extension
@@ -61,8 +73,19 @@ Default blocked sites: `x.com`, `youtube.com`
 # Configure Claude Code hooks
 npx claude-blocker --setup
 
-# Start server (prompts for setup if needed)
+# Start server in auto mode (Claude hooks + T3 bridge)
 npx claude-blocker
+
+# T3-only mode (skip Claude hook setup prompt)
+npx claude-blocker --provider t3
+
+# Explicit provider mode
+npx claude-blocker --provider claude
+npx claude-blocker --provider auto
+
+# Override T3 websocket endpoint/token
+npx claude-blocker --provider t3 --t3-url ws://127.0.0.1:3773
+npx claude-blocker --provider t3 --t3-token YOUR_TOKEN
 
 # Start on custom port
 npx claude-blocker --port 9000
@@ -90,7 +113,7 @@ npx claude-blocker --help
 
 - Node.js 18+
 - Chrome/Chromium or Firefox
-- [Claude Code](https://claude.ai/claude-code)
+- [Claude Code](https://claude.ai/claude-code) and/or [T3 Code](https://github.com/pingdotgg/t3code)
 
 ## Development
 

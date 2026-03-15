@@ -1,8 +1,9 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "http";
 import { WebSocketServer, WebSocket } from "ws";
-import type { HookPayload, ClientMessage } from "./types.js";
-import { DEFAULT_PORT } from "./types.js";
+import type { ClientMessage, HookPayload, StartServerOptions } from "./types.js";
+import { DEFAULT_PORT, DEFAULT_T3_WS_URL } from "./types.js";
 import { state } from "./state.js";
+import { T3Adapter } from "./adapters/t3Adapter.js";
 
 const LOCALHOST_HOST = "127.0.0.1";
 const MAX_BODY_BYTES = 64 * 1024;
@@ -39,7 +40,47 @@ function sendJson(res: ServerResponse, data: unknown, status = 200): void {
   res.end(JSON.stringify(data));
 }
 
-export function startServer(port: number = DEFAULT_PORT): void {
+function redactToken(urlString: string): string {
+  const parsed = new URL(urlString);
+  if (parsed.searchParams.has("token")) {
+    parsed.searchParams.set("token", "***");
+  }
+  return parsed.toString();
+}
+
+export function startServer(
+  port: number = DEFAULT_PORT,
+  options: StartServerOptions = {
+    provider: "auto",
+    t3Url: DEFAULT_T3_WS_URL,
+  }
+): void {
+  state.setProviderMode(options.provider);
+  const t3Enabled = options.provider === "auto" || options.provider === "t3";
+
+  let t3Adapter: T3Adapter | null = null;
+  if (t3Enabled) {
+    t3Adapter = new T3Adapter({
+      url: options.t3Url,
+      token: options.t3Token,
+      onSnapshot: (snapshot) => {
+        state.applyT3Snapshot(snapshot);
+      },
+      onDomainEvent: (event) => {
+        state.applyT3DomainEvent(event);
+      },
+      onConnection: (connection) => {
+        state.updateT3Connection(
+          connection.connected,
+          connection.lastError,
+          connection.lastConnectedAt
+        );
+      },
+    });
+    t3Adapter.start();
+  }
+  state.setT3Enabled(t3Enabled, t3Adapter ? redactToken(t3Adapter.resolvedUrl) : null);
+
   const server = createServer(async (req, res) => {
     const url = new URL(req.url || "/", `http://localhost:${port}`);
 
@@ -122,16 +163,28 @@ export function startServer(port: number = DEFAULT_PORT): void {
   });
 
   server.listen(port, LOCALHOST_HOST, () => {
+    const t3Line = t3Enabled
+      ? `│   T3 bridge: ${options.t3Url}${options.t3Token ? " (token)" : ""}`
+      : "│   T3 bridge: disabled";
+    const modeLabel =
+      options.provider === "auto"
+        ? "Claude + T3"
+        : options.provider === "claude"
+        ? "Claude only"
+        : "T3 only";
+
     console.log(`
 ┌─────────────────────────────────────┐
 │                                     │
 │   Claude Blocker Server             │
 │                                     │
+│   Mode: ${modeLabel.padEnd(28)}│
+${t3Line.padEnd(38)}│
 │   HTTP:      http://${LOCALHOST_HOST}:${port}  │
 │   WebSocket: ws://${LOCALHOST_HOST}:${port}/ws │
 │   Local-only: accepts loopback only │
 │                                     │
-│   Waiting for Claude Code hooks...  │
+│   Waiting for provider events...    │
 │                                     │
 └─────────────────────────────────────┘
 `);
@@ -140,6 +193,7 @@ export function startServer(port: number = DEFAULT_PORT): void {
   // Graceful shutdown - use once to prevent stacking handlers
   process.once("SIGINT", () => {
     console.log("\nShutting down...");
+    t3Adapter?.stop();
     state.destroy();
     wss.close();
     server.close();

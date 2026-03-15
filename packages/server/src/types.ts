@@ -13,13 +13,36 @@ export interface HookPayload {
   transcript_path?: string;
 }
 
+export type ProviderMode = "auto" | "claude" | "t3";
+export type SessionProvider = "claude" | "t3";
+export type SessionStatus = "idle" | "working" | "waiting_for_input";
+
 // Session state tracked by server
 export interface Session {
   id: string;
-  status: "idle" | "working" | "waiting_for_input";
+  provider: SessionProvider;
+  sourceId: string;
+  status: SessionStatus;
   lastActivity: Date;
   waitingForInputSince?: Date;
   cwd?: string;
+}
+
+export interface T3ConnectionState {
+  enabled: boolean;
+  url: string | null;
+  connected: boolean;
+  lastError: string | null;
+  lastConnectedAt: string | null;
+}
+
+export interface StatusResponse {
+  blocked: boolean;
+  sessions: Session[];
+  working: number;
+  waitingForInput: number;
+  t3: T3ConnectionState;
+  providerMode: ProviderMode;
 }
 
 // WebSocket messages from server to extension
@@ -46,3 +69,30 @@ export type ClientMessage = { type: "ping" } | { type: "subscribe" };
 // Server configuration
 export const DEFAULT_PORT = 8765;
 export const SESSION_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+export const DEFAULT_T3_WS_URL = "ws://127.0.0.1:3773";
+
+export interface StartServerOptions {
+  provider: ProviderMode;
+  t3Url: string;
+  t3Token?: string;
+}
+
+export interface T3Snapshot {
+  threads?: Array<{
+    id?: string;
+    session?: {
+      status?: string;
+      activeTurnId?: string | null;
+    };
+    activities?: Array<{ kind?: string }>;
+  }>;
+}
+
+export interface T3DomainEvent {
+  type?: string;
+  payload?: {
+    threadId?: string;
+    session?: { status?: string };
+    activity?: { kind?: string };
+  };
+}

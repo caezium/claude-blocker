@@ -1,5 +1,18 @@
-import type { Session, HookPayload, ServerMessage } from "./types.js";
-import { SESSION_TIMEOUT_MS, USER_INPUT_TOOLS } from "./types.js";
+import { SESSION_TIMEOUT_MS } from "./types.js";
+import type {
+  HookPayload,
+  ProviderMode,
+  ServerMessage,
+  Session,
+  SessionProvider,
+  SessionStatus,
+  StatusResponse,
+  T3ConnectionState,
+  T3DomainEvent,
+  T3Snapshot,
+} from "./types.js";
+import { ClaudeEventAdapter } from "./adapters/claudeAdapter.js";
+import { mapT3SessionStatus } from "./adapters/t3Adapter.js";
 
 type StateChangeCallback = (message: ServerMessage) => void;
 
@@ -9,29 +22,207 @@ interface SessionStateOptions {
   now?: () => number;
 }
 
+const USER_INPUT_REQUESTED_KIND = "user-input.requested";
+const USER_INPUT_RESOLVED_KIND = "user-input.resolved";
+
+function sessionKey(provider: SessionProvider, sourceId: string): string {
+  return `${provider}:${sourceId}`;
+}
+
 export class SessionState {
   private sessions: Map<string, Session> = new Map();
   private listeners: Set<StateChangeCallback> = new Set();
   private cleanupInterval: NodeJS.Timeout | null = null;
-  private readonly now: () => number;
+  private readonly nowFn: () => number;
+  private providerMode: ProviderMode = "auto";
+  private t3: T3ConnectionState = {
+    enabled: false,
+    url: null,
+    connected: false,
+    lastError: null,
+    lastConnectedAt: null,
+  };
+  private readonly claudeAdapter: ClaudeEventAdapter;
 
   constructor(options: SessionStateOptions = {}) {
-    this.now = options.now ?? Date.now;
+    this.nowFn = options.now ?? Date.now;
+    this.claudeAdapter = new ClaudeEventAdapter(this);
 
-    // Start cleanup interval for stale sessions
     if (options.autoCleanup ?? true) {
       this.cleanupInterval = setInterval(() => {
         this.cleanupStaleSessions();
-      }, options.cleanupIntervalMs ?? 30_000); // Check every 30 seconds
+      }, options.cleanupIntervalMs ?? 30_000);
       this.cleanupInterval.unref?.();
+    }
+  }
+
+  now(): number {
+    return this.nowFn();
+  }
+
+  setProviderMode(mode: ProviderMode): void {
+    this.providerMode = mode;
+  }
+
+  setT3Enabled(enabled: boolean, url: string | null): void {
+    this.t3.enabled = enabled;
+    this.t3.url = url;
+    if (!enabled) {
+      this.t3.connected = false;
+      this.t3.lastError = null;
+      this.t3.lastConnectedAt = null;
+      this.removeProviderSessions("t3");
+      this.broadcast();
+    }
+  }
+
+  updateT3Connection(connected: boolean, lastError: string | null, lastConnectedAt: string | null): void {
+    this.t3.connected = connected;
+    this.t3.lastError = lastError;
+    if (lastConnectedAt) {
+      this.t3.lastConnectedAt = lastConnectedAt;
     }
   }
 
   subscribe(callback: StateChangeCallback): () => void {
     this.listeners.add(callback);
-    // Immediately send current state to new subscriber
     callback(this.getStateMessage());
     return () => this.listeners.delete(callback);
+  }
+
+  emitStateChange(): void {
+    this.broadcast();
+  }
+
+  handleHook(payload: HookPayload): void {
+    this.claudeAdapter.handleHook(payload);
+  }
+
+  ensureClaudeSession(sourceId: string, cwd?: string): Session {
+    return this.ensureSession("claude", sourceId, cwd);
+  }
+
+  getClaudeSession(sourceId: string): Session | undefined {
+    return this.getSession("claude", sourceId);
+  }
+
+  removeClaudeSession(sourceId: string): void {
+    this.removeSession("claude", sourceId);
+  }
+
+  applyT3Snapshot(snapshot: T3Snapshot): void {
+    const seen = new Set<string>();
+    const threads = Array.isArray(snapshot.threads) ? snapshot.threads : [];
+    const now = new Date(this.now());
+
+    for (const thread of threads) {
+      const threadId = typeof thread?.id === "string" ? thread.id : null;
+      if (!threadId || !thread.session || typeof thread.session !== "object") {
+        continue;
+      }
+      seen.add(threadId);
+
+      const mappedStatus = mapT3SessionStatus(
+        typeof thread.session.status === "string" ? thread.session.status : undefined,
+      );
+      const waitingForInput = this.isThreadWaitingForInput(thread);
+      const session = this.ensureSession("t3", threadId);
+
+      session.status = waitingForInput ? "waiting_for_input" : mappedStatus;
+      session.waitingForInputSince = waitingForInput
+        ? session.waitingForInputSince ?? now
+        : undefined;
+      session.lastActivity = now;
+    }
+
+    for (const [id, session] of this.sessions) {
+      if (session.provider === "t3" && !seen.has(session.sourceId)) {
+        this.sessions.delete(id);
+      }
+    }
+
+    this.broadcast();
+  }
+
+  applyT3DomainEvent(event: T3DomainEvent): void {
+    const eventType = typeof event?.type === "string" ? event.type : null;
+    if (!eventType) {
+      return;
+    }
+
+    let changed = false;
+    const payload = event.payload;
+
+    if (eventType === "thread.session-set") {
+      const threadId = typeof payload?.threadId === "string" ? payload.threadId : null;
+      if (threadId) {
+        const mappedStatus = mapT3SessionStatus(payload?.session?.status);
+        const session = this.ensureSession("t3", threadId);
+        if (mappedStatus === "idle") {
+          session.status = "idle";
+          session.waitingForInputSince = undefined;
+        } else if (session.status !== "waiting_for_input") {
+          session.status = "working";
+        }
+        session.lastActivity = new Date(this.now());
+        changed = true;
+      }
+    } else if (eventType === "thread.activity-appended") {
+      const threadId = typeof payload?.threadId === "string" ? payload.threadId : null;
+      const activityKind = typeof payload?.activity?.kind === "string" ? payload.activity.kind : null;
+      if (threadId && activityKind) {
+        const session = this.ensureSession("t3", threadId);
+        if (activityKind === USER_INPUT_REQUESTED_KIND) {
+          session.status = "waiting_for_input";
+          session.waitingForInputSince ??= new Date(this.now());
+          session.lastActivity = new Date(this.now());
+          changed = true;
+        } else if (activityKind === USER_INPUT_RESOLVED_KIND) {
+          if (session.status === "waiting_for_input") {
+            session.status = "working";
+          }
+          session.waitingForInputSince = undefined;
+          session.lastActivity = new Date(this.now());
+          changed = true;
+        }
+      }
+    } else if (eventType === "thread.deleted") {
+      const threadId = typeof payload?.threadId === "string" ? payload.threadId : null;
+      if (threadId) {
+        this.removeSession("t3", threadId);
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      this.broadcast();
+    }
+  }
+
+  cleanupStaleSessionsNow(): void {
+    this.cleanupStaleSessions();
+  }
+
+  getStatus(): StatusResponse {
+    const sessions = Array.from(this.sessions.values());
+    const working = sessions.filter((s) => s.status === "working").length;
+    const waitingForInput = sessions.filter((s) => s.status === "waiting_for_input").length;
+    return {
+      blocked: working === 0 && waitingForInput === 0,
+      sessions,
+      working,
+      waitingForInput,
+      t3: { ...this.t3 },
+      providerMode: this.providerMode,
+    };
+  }
+
+  destroy(): void {
+    if (this.cleanupInterval) {
+      clearInterval(this.cleanupInterval);
+    }
+    this.sessions.clear();
+    this.listeners.clear();
   }
 
   private broadcast(): void {
@@ -44,9 +235,7 @@ export class SessionState {
   private getStateMessage(): ServerMessage {
     const sessions = Array.from(this.sessions.values());
     const working = sessions.filter((s) => s.status === "working").length;
-    const waitingForInput = sessions.filter(
-      (s) => s.status === "waiting_for_input"
-    ).length;
+    const waitingForInput = sessions.filter((s) => s.status === "waiting_for_input").length;
     return {
       type: "state",
       blocked: working === 0 && waitingForInput === 0,
@@ -56,82 +245,41 @@ export class SessionState {
     };
   }
 
-  handleHook(payload: HookPayload): void {
-    const { session_id, hook_event_name } = payload;
-
-    switch (hook_event_name) {
-      case "SessionStart":
-        this.sessions.set(session_id, {
-          id: session_id,
-          status: "idle",
-          lastActivity: new Date(this.now()),
-          cwd: payload.cwd,
-        });
-        console.log("Claude Code session connected");
-        break;
-
-      case "SessionEnd":
-        this.sessions.delete(session_id);
-        console.log("Claude Code session disconnected");
-        break;
-
-      case "UserPromptSubmit":
-        this.ensureSession(session_id, payload.cwd);
-        const promptSession = this.sessions.get(session_id)!;
-        promptSession.status = "working";
-        promptSession.waitingForInputSince = undefined;
-        promptSession.lastActivity = new Date(this.now());
-        break;
-
-      case "PreToolUse":
-        this.ensureSession(session_id, payload.cwd);
-        const toolSession = this.sessions.get(session_id)!;
-        // Check if this is a user input tool
-        if (payload.tool_name && USER_INPUT_TOOLS.includes(payload.tool_name)) {
-          toolSession.status = "waiting_for_input";
-          toolSession.waitingForInputSince = new Date(this.now());
-        } else if (toolSession.status === "waiting_for_input") {
-          // If waiting for input, only reset after 500ms (to ignore immediate tool calls like Edit)
-          const elapsed = this.now() - (toolSession.waitingForInputSince?.getTime() ?? 0);
-          if (elapsed > 500) {
-            toolSession.status = "working";
-            toolSession.waitingForInputSince = undefined;
-          }
-        } else {
-          toolSession.status = "working";
-        }
-        toolSession.lastActivity = new Date(this.now());
-        break;
-
-      case "Stop":
-        this.ensureSession(session_id, payload.cwd);
-        const idleSession = this.sessions.get(session_id)!;
-        if (idleSession.status === "waiting_for_input") {
-          // If waiting for input, only reset after 500ms (to ignore immediate Stop after AskUserQuestion)
-          const elapsed = this.now() - (idleSession.waitingForInputSince?.getTime() ?? 0);
-          if (elapsed > 500) {
-            idleSession.status = "idle";
-            idleSession.waitingForInputSince = undefined;
-          }
-        } else {
-          idleSession.status = "idle";
-        }
-        idleSession.lastActivity = new Date(this.now());
-        break;
+  private ensureSession(provider: SessionProvider, sourceId: string, cwd?: string): Session {
+    const key = sessionKey(provider, sourceId);
+    const existing = this.sessions.get(key);
+    if (existing) {
+      if (cwd) {
+        existing.cwd = cwd;
+      }
+      return existing;
     }
 
-    this.broadcast();
+    const session: Session = {
+      id: key,
+      provider,
+      sourceId,
+      status: "idle",
+      lastActivity: new Date(this.now()),
+      cwd,
+    };
+    this.sessions.set(key, session);
+    return session;
   }
 
-  private ensureSession(sessionId: string, cwd?: string): void {
-    if (!this.sessions.has(sessionId)) {
-      this.sessions.set(sessionId, {
-        id: sessionId,
-        status: "idle",
-        lastActivity: new Date(this.now()),
-        cwd,
-      });
-      console.log("Claude Code session connected");
+  private getSession(provider: SessionProvider, sourceId: string): Session | undefined {
+    return this.sessions.get(sessionKey(provider, sourceId));
+  }
+
+  private removeSession(provider: SessionProvider, sourceId: string): void {
+    this.sessions.delete(sessionKey(provider, sourceId));
+  }
+
+  private removeProviderSessions(provider: SessionProvider): void {
+    for (const [id, session] of this.sessions) {
+      if (session.provider === provider) {
+        this.sessions.delete(id);
+      }
     }
   }
 
@@ -151,35 +299,23 @@ export class SessionState {
     }
   }
 
-  cleanupStaleSessionsNow(): void {
-    this.cleanupStaleSessions();
-  }
-
-  getStatus(): {
-    blocked: boolean;
-    sessions: Session[];
-    working: number;
-    waitingForInput: number;
-  } {
-    const sessions = Array.from(this.sessions.values());
-    const working = sessions.filter((s) => s.status === "working").length;
-    const waitingForInput = sessions.filter(
-      (s) => s.status === "waiting_for_input"
-    ).length;
-    return {
-      blocked: working === 0 && waitingForInput === 0,
-      sessions,
-      working,
-      waitingForInput,
-    };
-  }
-
-  destroy(): void {
-    if (this.cleanupInterval) {
-      clearInterval(this.cleanupInterval);
+  private isThreadWaitingForInput(thread: NonNullable<T3Snapshot["threads"]>[number]): boolean {
+    const session = thread?.session;
+    if (!session || session.activeTurnId === null || session.activeTurnId === undefined) {
+      return false;
     }
-    this.sessions.clear();
-    this.listeners.clear();
+
+    const activities = Array.isArray(thread.activities) ? thread.activities : [];
+    for (let i = activities.length - 1; i >= 0; i--) {
+      const kind = activities[i]?.kind;
+      if (kind === USER_INPUT_REQUESTED_KIND) {
+        return true;
+      }
+      if (kind === USER_INPUT_RESOLVED_KIND) {
+        return false;
+      }
+    }
+    return false;
   }
 }
 
