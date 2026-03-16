@@ -297,6 +297,13 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === "REFRESH_STATE") {
+    void pollServerStatusOnce().finally(() => {
+      sendResponse(getPublicState());
+    });
+    return true;
+  }
+
   if (message.type === "ACTIVATE_BYPASS") {
     chrome.storage.sync.get(
       [

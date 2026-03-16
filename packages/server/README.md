@@ -44,6 +44,10 @@ npx claude-blocker --provider claude
 npx claude-blocker --provider t3 --t3-url ws://127.0.0.1:3773
 npx claude-blocker --provider t3 --t3-token YOUR_TOKEN
 
+# Aggregate other machine(s) into this blocker state
+npx claude-blocker --peer-status-url https://studio.tailnet.ts.net/status
+npx claude-blocker --peer-status-url http://192.168.1.50:8765/status --peer-refresh-ms 2000
+
 # Configure hooks (and exit)
 npx claude-blocker --setup
 
@@ -74,6 +78,7 @@ npx claude-blocker --help
 
 3. **Server** — Runs on localhost and:
    - Tracks provider sessions (`claude`, `t3`)
+   - Optionally polls peer `/status` endpoints and adds their counts
    - Knows when sessions are "working" vs "idle"
    - Broadcasts state via WebSocket to the browser extension
 
@@ -89,7 +94,7 @@ npx claude-blocker --help
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/status` | GET | Returns current state (sessions, blocked status, working, waitingForInput, providerMode, t3 connection debug) |
+| `/status` | GET | Returns current state (sessions, blocked status, working, waitingForInput, providerMode, t3 connection debug, peer connection state) |
 | `/hook` | POST | Receives hook payloads from Claude Code |
 
 ### WebSocket
@@ -105,6 +110,23 @@ Connect to `ws://127.0.0.1:8765/ws` to receive real-time state updates:
   "waitingForInput": 0
 }
 ```
+
+## Cross-Machine Aggregation
+
+Use `--peer-status-url` on your browser machine to include remote blocker state in totals:
+
+```bash
+npx claude-blocker --provider t3 \
+  --peer-status-url https://<mac-studio-tailnet-host>/status
+```
+
+Flags:
+- `--peer-status-url <http(s)://.../status>` (repeatable)
+- `--peer-refresh-ms <milliseconds>` (default `5000`)
+
+Notes:
+- Peer polling is one-way. Avoid A->B and B->A loops to prevent double-counting.
+- Remote blocker servers bind to loopback by default; expose remote `/status` via Tailscale Serve, SSH tunnel, or a trusted LAN proxy.
 
 ## Programmatic Usage
 

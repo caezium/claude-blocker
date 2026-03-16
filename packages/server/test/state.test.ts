@@ -153,3 +153,59 @@ test("stale sessions are removed during cleanup", () => {
 
   sessionState.destroy();
 });
+
+test("peer sources contribute to aggregate blocking state", () => {
+  const sessionState = new SessionState({ autoCleanup: false, now: () => 1_000 });
+
+  sessionState.setPeerSources(["https://studio.tailnet.ts.net/status"], 2000);
+  let status = sessionState.getStatus();
+  assert.equal(status.blocked, true);
+  assert.equal(status.working, 0);
+  assert.equal(status.waitingForInput, 0);
+  assert.equal(status.peers.enabled, true);
+  assert.equal(status.peers.sources.length, 1);
+
+  sessionState.updatePeerSource("https://studio.tailnet.ts.net/status", {
+    reachable: true,
+    sessions: 2,
+    working: 1,
+    waitingForInput: 0,
+    lastError: null,
+    lastSeenAt: "2026-03-16T00:00:00.000Z",
+  });
+
+  status = sessionState.getStatus();
+  assert.equal(status.blocked, false);
+  assert.equal(status.working, 1);
+  assert.equal(status.waitingForInput, 0);
+
+  sessionState.updatePeerSource("https://studio.tailnet.ts.net/status", {
+    reachable: true,
+    sessions: 2,
+    working: 0,
+    waitingForInput: 1,
+    lastError: null,
+    lastSeenAt: "2026-03-16T00:00:10.000Z",
+  });
+
+  status = sessionState.getStatus();
+  assert.equal(status.blocked, false);
+  assert.equal(status.working, 0);
+  assert.equal(status.waitingForInput, 1);
+
+  sessionState.updatePeerSource("https://studio.tailnet.ts.net/status", {
+    reachable: false,
+    sessions: 0,
+    working: 0,
+    waitingForInput: 0,
+    lastError: "offline",
+    lastSeenAt: null,
+  });
+
+  status = sessionState.getStatus();
+  assert.equal(status.blocked, true);
+  assert.equal(status.working, 0);
+  assert.equal(status.waitingForInput, 0);
+
+  sessionState.destroy();
+});

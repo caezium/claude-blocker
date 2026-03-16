@@ -2,6 +2,7 @@ import { DEFAULT_BLOCKED_DOMAINS } from "@claude-blocker/shared";
 
 const MODAL_ID = "claude-blocker-modal";
 const TOAST_ID = "claude-blocker-toast";
+const STATE_RECHECK_INTERVAL_MS = 2_000;
 
 // State shape from service worker
 interface PublicState {
@@ -25,6 +26,7 @@ let lastKnownState: PublicState | null = null;
 let shouldBeBlocked = false;
 let blockedDomains: string[] = [];
 let toastDismissed = false;
+let statePollInterval: ReturnType<typeof setInterval> | null = null;
 
 // Load domains from storage
 function loadDomains(): Promise<string[]> {
@@ -123,13 +125,26 @@ function createModal(): void {
     refreshModalBypassButton(shadow);
 
     bypassBtn.addEventListener("click", () => {
-      chrome.runtime.sendMessage({ type: "ACTIVATE_BYPASS" }, (response) => {
-        if (response?.success) {
-          removeModal();
+      chrome.runtime.sendMessage({ type: "REFRESH_STATE" }, (latestState: PublicState) => {
+        if (chrome.runtime.lastError || !latestState) {
+          refreshModalBypassButton(shadow);
           return;
         }
 
-        refreshModalBypassButton(shadow);
+        handleState(latestState);
+        if (!latestState.blocked) {
+          // Work resumed - do not consume a bypass.
+          return;
+        }
+
+        chrome.runtime.sendMessage({ type: "ACTIVATE_BYPASS" }, (response) => {
+          if (response?.success) {
+            removeModal();
+            return;
+          }
+
+          refreshModalBypassButton(shadow);
+        });
       });
     });
 
@@ -301,6 +316,15 @@ function requestState(): void {
   });
 }
 
+function startStatePolling(): void {
+  if (statePollInterval) {
+    clearInterval(statePollInterval);
+  }
+  statePollInterval = setInterval(() => {
+    requestState();
+  }, STATE_RECHECK_INTERVAL_MS);
+}
+
 // Listen for broadcasts from service worker
 chrome.runtime.onMessage.addListener((message) => {
   if (message.type === "STATE") {
@@ -323,6 +347,7 @@ async function init(): Promise<void> {
     setupMutationObserver();
     createModal();
     requestState();
+    startStatePolling();
   }
 }
 

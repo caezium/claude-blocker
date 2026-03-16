@@ -77,6 +77,8 @@ async function main(): Promise<void> {
     provider: cli.provider,
     t3Url,
     t3Token,
+    peerStatusUrls: cli.peerStatusUrls,
+    peerRefreshMs: cli.peerRefreshMs,
   });
 }
 

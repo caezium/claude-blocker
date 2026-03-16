@@ -36,12 +36,29 @@ export interface T3ConnectionState {
   lastConnectedAt: string | null;
 }
 
+export interface PeerSourceState {
+  url: string;
+  reachable: boolean;
+  sessions: number;
+  working: number;
+  waitingForInput: number;
+  lastError: string | null;
+  lastSeenAt: string | null;
+}
+
+export interface PeerConnectionState {
+  enabled: boolean;
+  refreshMs: number | null;
+  sources: PeerSourceState[];
+}
+
 export interface StatusResponse {
   blocked: boolean;
   sessions: Session[];
   working: number;
   waitingForInput: number;
   t3: T3ConnectionState;
+  peers: PeerConnectionState;
   providerMode: ProviderMode;
 }
 
@@ -70,11 +87,14 @@ export type ClientMessage = { type: "ping" } | { type: "subscribe" };
 export const DEFAULT_PORT = 8765;
 export const SESSION_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 export const DEFAULT_T3_WS_URL = "ws://127.0.0.1:3773";
+export const DEFAULT_PEER_REFRESH_MS = 5_000;
 
 export interface StartServerOptions {
   provider: ProviderMode;
   t3Url: string;
   t3Token?: string;
+  peerStatusUrls?: string[];
+  peerRefreshMs?: number;
 }
 
 export interface T3Snapshot {

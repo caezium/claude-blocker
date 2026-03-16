@@ -1,4 +1,4 @@
-import { DEFAULT_PORT, DEFAULT_T3_WS_URL } from "./types.js";
+import { DEFAULT_PEER_REFRESH_MS, DEFAULT_PORT, DEFAULT_T3_WS_URL } from "./types.js";
 import type { ProviderMode } from "./types.js";
 
 export interface CliOptions {
@@ -7,6 +7,8 @@ export interface CliOptions {
   t3Url: string;
   t3UrlProvided: boolean;
   t3Token?: string;
+  peerStatusUrls: string[];
+  peerRefreshMs: number;
   setup: boolean;
   remove: boolean;
   help: boolean;
@@ -28,6 +30,17 @@ function parseProvider(raw: string | undefined): ProviderMode | null {
     return null;
   }
   return raw === "auto" || raw === "claude" || raw === "t3" ? raw : null;
+}
+
+function parsePositiveInt(raw: string | undefined): number | null {
+  if (!raw) {
+    return null;
+  }
+  const parsed = parseInt(raw, 10);
+  if (Number.isNaN(parsed) || parsed <= 0) {
+    return null;
+  }
+  return parsed;
 }
 
 export function parseCliArgs(args: string[]): CliOptions {
@@ -85,12 +98,44 @@ export function parseCliArgs(args: string[]): CliOptions {
     t3Token = candidate;
   }
 
+  const peerStatusUrls: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] !== "--peer-status-url") {
+      continue;
+    }
+    const candidate = args[i + 1];
+    if (!candidate) {
+      throw new Error("Missing value for --peer-status-url");
+    }
+    try {
+      const parsed = new URL(candidate);
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+        throw new Error("invalid protocol");
+      }
+      peerStatusUrls.push(parsed.toString());
+    } catch {
+      throw new Error("Invalid peer status URL. Expected http:// or https:// URL");
+    }
+  }
+
+  let peerRefreshMs = DEFAULT_PEER_REFRESH_MS;
+  const peerRefreshIndex = args.indexOf("--peer-refresh-ms");
+  if (peerRefreshIndex !== -1) {
+    const parsed = parsePositiveInt(args[peerRefreshIndex + 1]);
+    if (parsed === null) {
+      throw new Error("Invalid peer refresh interval. Use milliseconds > 0");
+    }
+    peerRefreshMs = parsed;
+  }
+
   return {
     port,
     provider,
     t3Url,
     t3UrlProvided,
     t3Token,
+    peerStatusUrls,
+    peerRefreshMs,
     setup,
     remove,
     help,
@@ -110,6 +155,8 @@ Options:
   --provider <mode>     Provider mode: auto | claude | t3 (default: auto)
   --t3-url <ws-url>     T3 WebSocket URL (default: ${DEFAULT_T3_WS_URL})
   --t3-token <token>    T3 WebSocket auth token (optional)
+  --peer-status-url     Remote blocker /status URL (repeatable)
+  --peer-refresh-ms     Peer status poll interval in ms (default: ${DEFAULT_PEER_REFRESH_MS})
   --port <number>       Server port (default: ${DEFAULT_PORT})
   --help                Show this help message
 
@@ -117,6 +164,7 @@ Examples:
   npx claude-blocker
   npx claude-blocker --provider t3
   npx claude-blocker --provider auto --t3-url ws://127.0.0.1:3773
+  npx claude-blocker --peer-status-url https://studio.tailnet.ts.net/status
   npx claude-blocker --setup
 `);
 }

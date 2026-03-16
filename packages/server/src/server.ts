@@ -1,9 +1,10 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import type { ClientMessage, HookPayload, StartServerOptions } from "./types.js";
-import { DEFAULT_PORT, DEFAULT_T3_WS_URL } from "./types.js";
+import { DEFAULT_PEER_REFRESH_MS, DEFAULT_PORT, DEFAULT_T3_WS_URL } from "./types.js";
 import { state } from "./state.js";
 import { T3Adapter } from "./adapters/t3Adapter.js";
+import { PeerStatusPoller } from "./adapters/peerStatusPoller.js";
 
 const LOCALHOST_HOST = "127.0.0.1";
 const MAX_BODY_BYTES = 64 * 1024;
@@ -57,6 +58,9 @@ export function startServer(
 ): void {
   state.setProviderMode(options.provider);
   const t3Enabled = options.provider === "auto" || options.provider === "t3";
+  const peerStatusUrls = [...new Set(options.peerStatusUrls ?? [])];
+  const peerRefreshMs = options.peerRefreshMs ?? DEFAULT_PEER_REFRESH_MS;
+  state.setPeerSources(peerStatusUrls, peerRefreshMs);
 
   let t3Adapter: T3Adapter | null = null;
   if (t3Enabled) {
@@ -80,6 +84,18 @@ export function startServer(
     t3Adapter.start();
   }
   state.setT3Enabled(t3Enabled, t3Adapter ? redactToken(t3Adapter.resolvedUrl) : null);
+
+  let peerPoller: PeerStatusPoller | null = null;
+  if (peerStatusUrls.length > 0) {
+    peerPoller = new PeerStatusPoller({
+      urls: peerStatusUrls,
+      refreshMs: peerRefreshMs,
+      onUpdate: (url, update) => {
+        state.updatePeerSource(url, update);
+      },
+    });
+    peerPoller.start();
+  }
 
   const server = createServer(async (req, res) => {
     const url = new URL(req.url || "/", `http://localhost:${port}`);
@@ -169,6 +185,10 @@ export function startServer(
     const t3Line = t3Enabled
       ? `│   T3 bridge: ${effectiveT3Url}`
       : "│   T3 bridge: disabled";
+    const peerLine =
+      peerStatusUrls.length > 0
+        ? `│   Peers: ${peerStatusUrls.length} source${peerStatusUrls.length > 1 ? "s" : ""} @ ${peerRefreshMs}ms`
+        : "│   Peers: none";
     const modeLabel =
       options.provider === "auto"
         ? "Claude + T3"
@@ -183,6 +203,7 @@ export function startServer(
 │                                     │
 │   Mode: ${modeLabel.padEnd(28)}│
 ${t3Line.padEnd(38)}│
+${peerLine.padEnd(38)}│
 │   HTTP:      http://${LOCALHOST_HOST}:${port}  │
 │   WebSocket: ws://${LOCALHOST_HOST}:${port}/ws │
 │   Local-only: accepts loopback only │
@@ -197,6 +218,7 @@ ${t3Line.padEnd(38)}│
   process.once("SIGINT", () => {
     console.log("\nShutting down...");
     t3Adapter?.stop();
+    peerPoller?.stop();
     state.destroy();
     wss.close();
     server.close();

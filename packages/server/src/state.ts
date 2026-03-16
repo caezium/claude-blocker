@@ -1,6 +1,7 @@
 import { SESSION_TIMEOUT_MS } from "./types.js";
 import type {
   HookPayload,
+  PeerConnectionState,
   ProviderMode,
   ServerMessage,
   Session,
@@ -42,6 +43,11 @@ export class SessionState {
     lastError: null,
     lastConnectedAt: null,
   };
+  private peers: PeerConnectionState = {
+    enabled: false,
+    refreshMs: null,
+    sources: [],
+  };
   private readonly claudeAdapter: ClaudeEventAdapter;
 
   constructor(options: SessionStateOptions = {}) {
@@ -74,6 +80,79 @@ export class SessionState {
       this.removeProviderSessions("t3");
       this.broadcast();
     }
+  }
+
+  setPeerSources(urls: string[], refreshMs: number): void {
+    if (urls.length === 0) {
+      this.peers = {
+        enabled: false,
+        refreshMs: null,
+        sources: [],
+      };
+      this.broadcast();
+      return;
+    }
+
+    const nextUrls = [...new Set(urls)];
+    const nextByUrl = new Map(this.peers.sources.map((source) => [source.url, source]));
+    const nextSources = nextUrls.map((url) => {
+      const existing = nextByUrl.get(url);
+      return (
+        existing ?? {
+          url,
+          reachable: false,
+          sessions: 0,
+          working: 0,
+          waitingForInput: 0,
+          lastError: null,
+          lastSeenAt: null,
+        }
+      );
+    });
+
+    this.peers = {
+      enabled: true,
+      refreshMs,
+      sources: nextSources,
+    };
+    this.broadcast();
+  }
+
+  updatePeerSource(
+    url: string,
+    update: {
+      reachable: boolean;
+      sessions: number;
+      working: number;
+      waitingForInput: number;
+      lastError: string | null;
+      lastSeenAt: string | null;
+    },
+  ): void {
+    const source = this.peers.sources.find((candidate) => candidate.url === url);
+    if (!source) {
+      return;
+    }
+
+    const changed =
+      source.reachable !== update.reachable ||
+      source.sessions !== update.sessions ||
+      source.working !== update.working ||
+      source.waitingForInput !== update.waitingForInput ||
+      source.lastError !== update.lastError ||
+      source.lastSeenAt !== update.lastSeenAt;
+
+    if (!changed) {
+      return;
+    }
+
+    source.reachable = update.reachable;
+    source.sessions = update.sessions;
+    source.working = update.working;
+    source.waitingForInput = update.waitingForInput;
+    source.lastError = update.lastError;
+    source.lastSeenAt = update.lastSeenAt;
+    this.broadcast();
   }
 
   updateT3Connection(connected: boolean, lastError: string | null, lastConnectedAt: string | null): void {
@@ -205,14 +284,22 @@ export class SessionState {
 
   getStatus(): StatusResponse {
     const sessions = Array.from(this.sessions.values());
-    const working = sessions.filter((s) => s.status === "working").length;
-    const waitingForInput = sessions.filter((s) => s.status === "waiting_for_input").length;
+    const localWorking = sessions.filter((s) => s.status === "working").length;
+    const localWaitingForInput = sessions.filter((s) => s.status === "waiting_for_input").length;
+    const peerTotals = this.getPeerTotals();
+    const working = localWorking + peerTotals.working;
+    const waitingForInput = localWaitingForInput + peerTotals.waitingForInput;
     return {
       blocked: working === 0 && waitingForInput === 0,
       sessions,
       working,
       waitingForInput,
       t3: { ...this.t3 },
+      peers: {
+        enabled: this.peers.enabled,
+        refreshMs: this.peers.refreshMs,
+        sources: this.peers.sources.map((source) => ({ ...source })),
+      },
       providerMode: this.providerMode,
     };
   }
@@ -234,15 +321,36 @@ export class SessionState {
 
   private getStateMessage(): ServerMessage {
     const sessions = Array.from(this.sessions.values());
-    const working = sessions.filter((s) => s.status === "working").length;
-    const waitingForInput = sessions.filter((s) => s.status === "waiting_for_input").length;
+    const localWorking = sessions.filter((s) => s.status === "working").length;
+    const localWaitingForInput = sessions.filter((s) => s.status === "waiting_for_input").length;
+    const localSessions = sessions.length;
+    const peerTotals = this.getPeerTotals();
+    const working = localWorking + peerTotals.working;
+    const waitingForInput = localWaitingForInput + peerTotals.waitingForInput;
     return {
       type: "state",
       blocked: working === 0 && waitingForInput === 0,
-      sessions: sessions.length,
+      sessions: localSessions + peerTotals.sessions,
       working,
       waitingForInput,
     };
+  }
+
+  private getPeerTotals(): { sessions: number; working: number; waitingForInput: number } {
+    let sessions = 0;
+    let working = 0;
+    let waitingForInput = 0;
+
+    for (const source of this.peers.sources) {
+      if (!source.reachable) {
+        continue;
+      }
+      sessions += source.sessions;
+      working += source.working;
+      waitingForInput += source.waitingForInput;
+    }
+
+    return { sessions, working, waitingForInput };
   }
 
   private ensureSession(provider: SessionProvider, sourceId: string, cwd?: string): Session {

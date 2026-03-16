@@ -5,6 +5,7 @@ Block distracting websites unless your coding agent is actively running inferenc
 Supports:
 - [Claude Code](https://claude.ai/claude-code) via hooks
 - [T3 Code](https://github.com/pingdotgg/t3code) via websocket bridge (Codex-backed)
+- Optional peer blocker servers (cross-machine aggregation)
 
 Note: standalone Codex CLI hook mode is not in this phase. Codex support here is through T3 Code.
 
@@ -95,6 +96,10 @@ npx claude-blocker --provider auto
 npx claude-blocker --provider t3 --t3-url ws://127.0.0.1:3773
 npx claude-blocker --provider t3 --t3-token YOUR_TOKEN
 
+# Aggregate status from another machine (repeat flag for multiple peers)
+npx claude-blocker --provider t3 --peer-status-url https://studio.tailnet.ts.net/status
+npx claude-blocker --peer-status-url http://192.168.1.50:8765/status --peer-refresh-ms 2000
+
 # Start on custom port
 npx claude-blocker --port 9000
 
@@ -113,9 +118,23 @@ npx claude-blocker --help
 - **Soft blocking** — Sites show a modal overlay, not a hard block
 - **Real-time updates** — No page refresh needed when state changes
 - **Multi-session support** — Tracks multiple Claude Code instances
+- **Cross-machine support** — Include remote blocker `/status` peers in totals
 - **Emergency bypass** — Configurable unlock duration and unlocks per day
 - **Configurable sites** — Add/remove sites from extension settings
 - **Works offline** — Blocks everything when server isn't running (safety default)
+
+## Cross-Machine Setup (MacBook + Mac Studio)
+
+Run blocker on each machine as usual. On the machine with the browser extension (MacBook), include the Mac Studio status URL as a peer:
+
+```bash
+npx claude-blocker --provider t3 --peer-status-url https://<mac-studio-tailnet-host>/status
+```
+
+Notes:
+- Peer URLs must be reachable from the MacBook (`http://.../status` or `https://.../status`).
+- The remote server still binds to loopback by default; expose it through Tailscale Serve, SSH tunnel, or another trusted local proxy.
+- Do not create a loop where A polls B and B polls A, or counts can be double-included.
 
 ## Requirements
 
@@ -160,7 +179,7 @@ node packages/server/dist/bin.js --provider t3
 ## Privacy
 
 - **No data collection** — All data stays on your machine
-- **Local only** — Server runs on localhost, no external connections
+- **Inbound local only by default** — Server binds to `127.0.0.1`; optional outbound peer polling only hits URLs you configure
 - **Browser sync** — Blocked sites list syncs via your browser account if sync storage is enabled
 
 See [PRIVACY.md](PRIVACY.md) for full privacy policy.
