@@ -1,8 +1,14 @@
-import { DEFAULT_PEER_REFRESH_MS, DEFAULT_PORT, DEFAULT_T3_WS_URL } from "./types.js";
+import {
+  DEFAULT_HOST,
+  DEFAULT_PEER_REFRESH_MS,
+  DEFAULT_PORT,
+  DEFAULT_T3_WS_URL,
+} from "./types.js";
 import type { ProviderMode } from "./types.js";
 
 export interface CliOptions {
   port: number;
+  host: string;
   provider: ProviderMode;
   t3Url: string;
   t3UrlProvided: boolean;
@@ -32,6 +38,16 @@ function parseProvider(raw: string | undefined): ProviderMode | null {
   return raw === "auto" || raw === "claude" || raw === "t3" ? raw : null;
 }
 
+function parseHost(raw: string | undefined): string | null {
+  if (!raw) {
+    return null;
+  }
+  if (raw === "127.0.0.1" || raw === "0.0.0.0") {
+    return raw;
+  }
+  return null;
+}
+
 function parsePositiveInt(raw: string | undefined): number | null {
   if (!raw) {
     return null;
@@ -56,6 +72,16 @@ export function parseCliArgs(args: string[]): CliOptions {
       throw new Error("Invalid port number");
     }
     port = parsed;
+  }
+
+  let host = DEFAULT_HOST;
+  const hostIndex = args.indexOf("--host");
+  if (hostIndex !== -1) {
+    const parsed = parseHost(args[hostIndex + 1]);
+    if (parsed === null) {
+      throw new Error("Invalid host. Use: 127.0.0.1 or 0.0.0.0");
+    }
+    host = parsed;
   }
 
   let provider: ProviderMode = "auto";
@@ -130,6 +156,7 @@ export function parseCliArgs(args: string[]): CliOptions {
 
   return {
     port,
+    host,
     provider,
     t3Url,
     t3UrlProvided,
@@ -152,6 +179,7 @@ Usage:
 Options:
   --setup               Configure Claude Code hooks
   --remove              Remove Claude Code hooks
+  --host <bind-host>    Bind host: 127.0.0.1 (default) or 0.0.0.0 (LAN mode)
   --provider <mode>     Provider mode: auto | claude | t3 (default: auto)
   --t3-url <ws-url>     T3 WebSocket URL (default: ${DEFAULT_T3_WS_URL})
   --t3-token <token>    T3 WebSocket auth token (optional)
@@ -163,6 +191,7 @@ Options:
 Examples:
   npx claude-blocker
   npx claude-blocker --provider t3
+  npx claude-blocker --host 0.0.0.0 --provider t3
   npx claude-blocker --provider auto --t3-url ws://127.0.0.1:3773
   npx claude-blocker --peer-status-url https://studio.tailnet.ts.net/status
   npx claude-blocker --setup

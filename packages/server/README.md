@@ -31,6 +31,9 @@ npx claude-blocker --provider t3
 # Start server (default port 8765)
 npx claude-blocker
 
+# Bind on LAN (allows other machines to read /status)
+npx claude-blocker --host 0.0.0.0
+
 # Start T3-only mode
 npx claude-blocker --provider t3
 
@@ -121,12 +124,13 @@ npx claude-blocker --provider t3 \
 ```
 
 Flags:
+- `--host <127.0.0.1|0.0.0.0>` (default `127.0.0.1`)
 - `--peer-status-url <http(s)://.../status>` (repeatable)
 - `--peer-refresh-ms <milliseconds>` (default `5000`)
 
 Notes:
 - Peer polling is one-way. Avoid A->B and B->A loops to prevent double-counting.
-- Remote blocker servers bind to loopback by default; expose remote `/status` via Tailscale Serve, SSH tunnel, or a trusted LAN proxy.
+- Remote blocker servers bind to loopback by default; use `--host 0.0.0.0` on the remote machine for direct LAN access.
 
 ## Programmatic Usage
 

@@ -85,6 +85,9 @@ npx claude-blocker --setup
 # Start server in auto mode (Claude hooks + T3 bridge)
 npx claude-blocker
 
+# Enable LAN mode (for cross-machine peer polling without tunnels)
+npx claude-blocker --host 0.0.0.0
+
 # T3-only mode (skip Claude hook setup prompt)
 npx claude-blocker --provider t3
 
@@ -133,7 +136,7 @@ npx claude-blocker --provider t3 --peer-status-url https://<mac-studio-tailnet-h
 
 Notes:
 - Peer URLs must be reachable from the MacBook (`http://.../status` or `https://.../status`).
-- The remote server still binds to loopback by default; expose it through Tailscale Serve, SSH tunnel, or another trusted local proxy.
+- For direct LAN access (no tunnel), run the remote server with `--host 0.0.0.0`.
 - Do not create a loop where A polls B and B polls A, or counts can be double-included.
 
 ## Requirements

@@ -88,11 +88,13 @@ export const DEFAULT_PORT = 8765;
 export const SESSION_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 export const DEFAULT_T3_WS_URL = "ws://127.0.0.1:3773";
 export const DEFAULT_PEER_REFRESH_MS = 5_000;
+export const DEFAULT_HOST = "127.0.0.1";
 
 export interface StartServerOptions {
   provider: ProviderMode;
   t3Url: string;
   t3Token?: string;
+  host?: string;
   peerStatusUrls?: string[];
   peerRefreshMs?: number;
 }
